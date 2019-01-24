@@ -2,6 +2,8 @@ import numpy as np
 from neo import io
 import os
 import pdb
+from quantities import Quantity
+from fractions import Fraction
 
 '''
 ABF_IO.py
@@ -70,3 +72,37 @@ def merge_dicts(*dict_args):
     for d in dict_args:
         results.update(d)
     return results
+
+def convert_quantity(x):
+    if type(x) is Quantity:
+        return [x.item(), str(x.units).split()[1]]
+    
+    elif type(x) is list:
+        if type(x[0]) is float and type(x[1]) is str:
+            return Quantity(*x, dtype=float)
+        else:
+            raise TypeError('Do not recognise type of %s'%x)
+    else:
+        return x
+    
+def resample(x, cf, nf):
+    if nf>cf:
+        xtmp = np.repeat(x,np.ceil(nf/cf))
+        mask = np.ones(len(xtmp),dtype=bool)
+        if np.ceil(nf/cf) != nf/cf:
+            skipeach = Fraction((nf/cf)/np.ceil(nf/cf)).limit_denominator().denominator
+            mask[::skipeach] = 0
+        xnew = xtmp[mask]
+    elif nf<cf:
+        xtmp = x[::int(cf/hcf(cf,nf))]
+        xnew = np.repeat(xtmp,int(nf/hcf(cf,nf)))
+    elif nf==cf:
+        xnew = x
+    return xnew
+
+def highestCommonFactor(x, y):
+    while y != 0:
+        (x, y) = (y, x % y)
+    return x
+
+hcf = highestCommonFactor

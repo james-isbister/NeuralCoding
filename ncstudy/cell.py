@@ -2,32 +2,76 @@
 Author: Luke Prince
 Date: 11 January 2019
 '''
-import csv
-import pandas as pd
-import ephys
+
+import os
+from collections import OrderedDict
+
+from ephys import *
+from synapses import *
+from stats import *
+from .plots import add_inset_ax
+from .utils import load_episodic, resample
+
+from quantities import pF, MOhm, nA, mV, ms, Hz
 import matplotlib.pyplot as plt
 import numpy as np
-from collections import OrderedDict
+import pandas as pd
+from scipy.stats import binned_statistic
+
+#-----------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------
 
 class Cell(object):
     def __init__(self, celldir):
         self.celldir  = celldir
-        self.fluor    = pd.read_csv(celldir+'/Metadata_%s.csv'%celldir, nrows=1)['Celltype'].squeeze()
-        self.layer    = pd.read_csv(celldir+'/Metadata_%s.csv'%celldir, nrows=1)['Layer'].squeeze()
+        self.cellid   = os.path.basename(self.celldir)
+        self.fluor    = pd.read_csv(celldir+'/Metadata_%s.csv'%self.cellid, nrows=1)['Celltype'].squeeze()
+        self.layer    = pd.read_csv(celldir+'/Metadata_%s.csv'%self.cellid, nrows=1)['Layer'].squeeze()
         
     def extract_ephys(self, pulse_on, pulse_len, sampling_frequency, I_min, I_max, I_step):
-        self.ephys   = ephys.Electrophysiology(celldir = self.celldir, 
-                                               pulse_on = pulse_on, pulse_len = pulse_len,
-                                               sampling_frequency = sampling_frequency,
-                                               I_min = I_min, I_max = I_max, I_step = I_step)
+        self.ephys   = Electrophysiology(celldir = self.celldir, 
+                                         pulse_on = pulse_on, pulse_len = pulse_len,
+                                         sampling_frequency = sampling_frequency,
+                                         I_min = I_min, I_max = I_max, I_step = I_step)
         self.ephys.extract_features()
-        self.ephys.plot(closefig=True)
+        if not os.path.exists(self.celldir+'/ephys_features.svg'):
+            self.ephys.plot(closefig=True)
         
         return self.ephys.results
     
+    def extract_syns(self, mono_winsize, total_winsize, sampling_frequency):
+        self.syns = Synapses(celldir = self.celldir,
+                             mono_winsize = mono_winsize, total_winsize=total_winsize,
+                             sampling_frequency = sampling_frequency)
+        self.syns.extract_features()
+        if not os.path.exists(self.celldir+'/syn_features.svg'):
+            self.syns.plot(closefig=True)
+        
+    def estimate_MI(self, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+        
+        self.rate_code = Code(celldir= self.celldir, code_type= 'rate',
+                              mono_winsize= mono_winsize, stim_winsize= stim_winsize,
+                              start = start, dur = dur, sampling_frequency = sampling_frequency)
+        self.rate_code.estimate_mutual_information()
+        if self.rate_code.data_exists:
+            self.rate_code.plot(closefig=True)
+        
+        self.temp_code = Code(celldir= self.celldir, code_type= 'temp',
+                              mono_winsize= mono_winsize, stim_winsize= stim_winsize,
+                              start = start, dur = dur, sampling_frequency = sampling_frequency)
+        self.temp_code.estimate_mutual_information()
+        if self.temp_code.data_exists:
+            self.temp_code.plot(closefig=True)
+            
+        plt.close('all')
+        
+#-----------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------
+    
 class CellCollection(OrderedDict):
-    def __init__(self, *args):
+    def __init__(self, data_path, *args):
         OrderedDict.__init__(self, args)
+        self.data_path = data_path
         
     def __getitem__(self, key):
         
@@ -37,7 +81,7 @@ class CellCollection(OrderedDict):
         return OrderedDict.__getitem__(self, key)
     
     def __setitem__(self, cell):
-        OrderedDict.__setitem__(self, cell.celldir, cell)
+        OrderedDict.__setitem__(self, cell.cellid, cell)
         
     def add(self, cell):
         self.__setitem__(cell)
@@ -45,22 +89,22 @@ class CellCollection(OrderedDict):
     def collect_results(self):
         self.collect_metadata()
         self.collect_ephys()
+        self.collect_syns()
+        self.collect_MI()
                 
     def collect_metadata(self):
-        if not hasattr(self, 'metadata'):
-            self.metadata = {'Fluorescence':[],'Layer':[]}
+        self.metadata = {'Fluorescence':[],'Layer':[]}
         
         for cellid, celln in self.items():
             self.metadata['Fluorescence'].append(celln.fluor)
             self.metadata['Layer'].append(celln.layer)
                 
     def collect_ephys(self):
-        if not hasattr(self, 'ephys'):
-            self.ephys = {'Vrest (mV)': [],'Input Resistance (megaohm)': [],'Cell Capacitance (pF)': [],
-                          'Rheobase (nA)':[],'fI slope (Hz/nA)':[],
-                          'Adaptation Ratio':[],'Sag Amplitude (mV)':[],
-                          'Spike Threshold (mV)':[],'Spike Amplitude (mV)':[],
-                          'Spike Halfwidth (ms)':[],'Membrane Time Constant (ms)':[]}
+        self.ephys = {'Vrest (mV)': [],'Input Resistance (megaohm)': [],'Cell Capacitance (pF)': [],
+                      'Rheobase (nA)':[],'fI slope (Hz/nA)':[],
+                      'Adaptation Ratio':[],'Sag Amplitude (mV)':[],
+                      'Spike Threshold (mV)':[],'Spike Amplitude (mV)':[],
+                      'Spike Halfwidth (ms)':[],'Membrane Time Constant (ms)':[]}
         
         for cellid, celln in self.items():
             if hasattr(celln, 'ephys'):
@@ -70,29 +114,497 @@ class CellCollection(OrderedDict):
                     except AttributeError:
                         self.ephys[key].append(val)
                         
-    def plot_ephys_summary(self):
-        fig,axs=plt.subplots(nrows=4,ncols=3,figsize=(12,12),sharey=False)
-        axs[-1][-1].axis('off');
-        fluors=['NF', 'PV+', 'SST+']
-        colors = ['#F5A623', '#4A90E2', '#7ED321']
-        cols = self.df_ephys.columns[2:]
-        
-        for ix,col in enumerate(cols):
-            plt.sca(np.ravel(axs)[ix])
-            df_tmp = self.df_ephys[['Fluorescence', col]]
-            plt.title(col, fontsize=14)
-            
-            for jx,fl in enumerate(fluors):
-                vals = df_tmp[df_tmp['Fluorescence']==fl][col]
-                plt.plot(jx + np.random.randn(len(vals))*0.1, vals, '.', ms=8, color=colors[jx], alpha=0.5)
+    def collect_syns(self):
+        self.syns = {'Reliability' : [], 'Mean Delay' : [], 'Max Delay' : []}
+        for cellid, celln in self.items():
+            if hasattr(celln, 'syns'):
+                self.syns['Reliability'].append(celln.syns.reliability)
+                self.syns['Mean Delay'].append(celln.syns.mean_delay)
+                self.syns['Max Delay'].append(celln.syns.max_delay)
                 
-                # Reduce range of plot with outliers
-                if col=='Adaptation Ratio':
-                    plt.ylim(0,11)
-                    plt.plot(jx, vals.median(), 's', ms=10, color=colors[jx])
-                else:
-                    plt.plot(jx, vals.mean(), 's', ms=10, color=colors[jx])
+    def collect_MI(self):
+        self.MI = {'Rate' : {'Spikes'     : {'mono': [] , 'poly' : [], 'all' : []},
+                             'Average Vm' : {'mono': [] , 'poly' : [], 'all' : []},
+                             'Initial Slope' : []},
+                   'Temporal' : {'Spikes'     : {'mono': [] , 'poly' : [], 'all' : []},
+                             'Average Vm' : {'mono': [] , 'poly' : [], 'all' : []},
+                             'Initial Slope' : []}}
+        
+        for cellid, celln in self.items():
+            if hasattr(celln, 'rate_code'):
+                for key_a, item_a in self.MI['Rate'].items():
+                    if type(item_a) is list:
+                        self.MI['Rate'][key_a].append(celln.rate_code.results[key_a])
+                    elif type(item_a) is dict:
+                        for key_b, item_b in self.MI['Rate'][key_a].items():
+                            self.MI['Rate'][key_a][key_b].append(celln.rate_code.results[key_a][key_b]) 
+                                
+            if hasattr(celln, 'temp_code'):
+                for key_a, item_a in self.MI['Temporal'].items():
+                    if type(item_a) is list:
+                        self.MI['Temporal'][key_a].append(celln.temp_code.results[key_a])
+                    elif type(item_a) is dict:
+                        for key_b, item_b in self.MI['Temporal'][key_a].items():
+                            self.MI['Temporal'][key_a][key_b].append(celln.temp_code.results[key_a][key_b]) 
 
-            plt.xticks(range(3), fluors)
-        fig.subplots_adjust(hspace=0.4)
-        return fig
+
+
+
+class Synapses(Cell):
+    def __init__(self, celldir, mono_winsize, total_winsize, sampling_frequency):
+        super(Synapses, self).__init__(celldir)
+        
+        self.mono_winsize = int(mono_winsize*sampling_frequency) # in steps
+        self.total_winsize = int(total_winsize*sampling_frequency) # in steps
+        self.sampling_frequency = sampling_frequency # kHz
+        self.time = np.arange(self.total_winsize, dtype=float)/self.sampling_frequency
+        
+        self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
+        self.synapses = dict([(ix, {'id' : self.presyn_ids[ix]}) for ix in range(10)])
+
+    def get_data():
+        data = load_episodic(self.celldir + '/Synapse_finder.abf')
+        Vm = data[0][:, self.presyn_ids, 0]
+        pulse = data[0][:, :, 2]
+        return Vm, pulse
+        
+    def extract_features(self):
+        Vm, pulse = self.get_data()
+        self.pulse_on = np.arange(1, len(self.pulse))[np.logical_and(self.pulse[1:, 0]>0.1, self.pulse[:-1, 0]<=0.1)]
+        
+        for synapse_id, synapse in self.synapses.items():
+            synapse['data']     = np.array([Vm[p:p+self.total_winsize, synapse_id].T for p in self.pulse_on])
+            synapse['pEarlyAP'] = 0.0
+            synapse['pMono']    = 0.0
+            synapse['delay']    = []
+            synapse['slope']    = []
+            synapse['mono_fit'] = []
+            
+            '''Estimate direct response properties'''
+            
+            for trace in synapse['data']:
+                pars, pmodel, RSS, baseline = fitPiecewiseLinearFunction(self.time[:self.mono_winsize], trace[:self.mono_winsize])
+                synapse['pEarlyAP'] += np.any(trace[:self.mono_winsize*2]>-25)*1.0/len(synapse['data'])
+                if pmodel >= 0.99:
+                    synapse['pMono'] += 1./len(synapse['data'])
+                    synapse['slope'].append(pars[0])
+                    synapse['delay'].append(pars[1])
+                    synapse['mono_fit'].append(generalLinearDiscontinuousFn(self.time[:self.mono_winsize], baseline, *pars))
+                else:
+                    synapse['delay'].append(np.nan)
+                    synapse['slope'].append(0.0)
+                    synapse['mono_fit'].append(baseline)
+                
+            synapse['delay'] = np.nanmean(synapse['delay'])
+            synapse['slope'] = np.nanmean(synapse['slope'])
+                
+            '''Estimate network properties'''
+            avTrace = np.median(synapse['data'], axis=0)
+            Vstart  = np.mean(avTrace[:10])
+            V0      = np.mean(avTrace[-50:])
+            latency = 5.0 if np.isnan(synapse['delay']) else synapse['delay']
+            
+            optoResponse_fixdelay = lambda t, Vss, taur, taud : optoResponse(t, Vss, taur, taud, latency, V0)
+            popt, pcov = curve_fit(optoResponse_fixdelay, self.time, avTrace, p0=[np.percentile(trace,90),10,25])
+            synapse['taur']    = popt[1]
+            synapse['taud']    = popt[2]
+            synapse['Vinc']    = popt[0] - Vstart
+            synapse['net_fit'] = optoResponse_fixdelay(self.time, popt[0], popt[1], popt[2])
+            
+        self.reliability = np.mean([self.synapses[ix]['pMono'] for ix in range(len(self.synapses))])
+        self.mean_delay  = np.nanmean([self.synapses[ix]['delay'] for ix in range(len(self.synapses))])
+        self.max_delay   = np.nanmax([self.synapses[ix]['delay'] for ix in range(len(self.synapses))])
+    
+    def plot(self, figsize=(12, 4.5), savefig=True, closefig=False):
+        fig,axs = plt.subplots(nrows=2,ncols=5,sharex=True,sharey=True,figsize=figsize)
+        axs = np.ravel(axs)
+        for synapse_id, synapse in self.synapses.items():
+            plt.sca(axs[synapse_id])
+            plt.plot(self.time, synapse['data'].T, lw=1, alpha=0.5, color='C0')
+            plt.title('Input #%i'%(synapse['id']+1))
+            
+            if synapse_id >= 5:
+                plt.xlabel('Time (ms)')
+            if synapse_id%5 == 0:
+                plt.ylabel('Voltage (mV)')
+                
+            plt.plot(self.time, synapse['net_fit'], color='C1')
+            
+            ax_inset = add_inset_ax(axs[synapse_id], rect=[0.5, 0.5, 0.4, 0.4])
+            plt.sca(ax_inset)
+            plt.plot(self.time[:self.mono_winsize], synapse['data'][:, :self.mono_winsize].T, lw=1, alpha=0.5, color='C0')
+            plt.title('P(mono)=%.1f'%synapse['pMono'], fontsize=10)
+
+            for rfit in synapse['mono_fit']:
+                plt.plot(self.time[:self.mono_winsize], rfit, color='C1', lw=1, alpha=0.5)
+                
+        if savefig:
+            fig.savefig(self.celldir+'/syn_features.svg')
+            
+        if closefig:
+            fig.clf()
+            plt.close()
+            
+#-----------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------            
+            
+class Electrophysiology(Cell):
+    
+    def __init__(self, celldir, pulse_on, pulse_len, sampling_frequency, I_min, I_max, I_step):
+        super(Electrophysiology, self).__init__(celldir)
+        self.pulse_on           = pulse_on
+        self.pulse_off          = pulse_on + pulse_len
+        self.pulse_len          = pulse_len
+        self.pulse_off_ix       = int(self.pulse_off*sampling_frequency)
+        self.pulse_on_ix        = int(self.pulse_on*sampling_frequency)
+        self.sampling_frequency = sampling_frequency
+        self.I_min              = I_min
+        self.I_max              = I_max
+        self.I_step             = I_step
+        self.I_inj              = np.arange(I_min, I_max + I_step, I_step)
+        
+    #------------------------------------------------------------------
+    #------------------------------------------------------------------
+        
+    def get_data(self):
+        return load_episodic(self.celldir+'/Ic_step.abf')[0][:,:,0]
+        
+    #------------------------------------------------------------------
+    #------------------------------------------------------------------
+
+    def extract_features(self):
+        data            = self.get_data()
+        self.total_time = len(data)/self.sampling_frequency
+        self.time       = np.arange(0, self.total_time, 1./self.sampling_frequency)
+
+        '''True/False threshold crossing at each index'''
+        threshCross = np.array([findThreshCross(trace) for trace in data.T])
+
+        '''Count number of threshold crossings'''
+        self.spikeCount = np.array([np.count_nonzero(tc) for tc in threshCross])
+
+        '''Estimate Spike Frequency from number of threshold crossings'''
+        self.spikeFreq = self.spikeCount*1000./self.pulse_len # in Hz
+
+        '''Estimate resting Membrane Potential'''
+        self.v_rest = resting_MP(data[:self.pulse_on_ix]) # mV
+
+        '''Estimate Sag Amplitude'''
+        self.v_sag = sag_amplitude(data[self.pulse_on_ix:self.pulse_off_ix,0]) # mV
+
+        '''Input resistance measurement from traces where there was no threshold cross, and I>0'''
+        self.Rin = np.mean([input_resistance(trace[self.pulse_on_ix:self.pulse_off_ix],I,self.v_rest) 
+                            for (trace, I, crossed) in zip(data.T, self.I_inj, np.any(threshCross,axis=1))
+                            if ((np.abs(I)>0) and not crossed)]) # MOhm
+
+        '''Membrane time constant measurement from traces for 100ms after pulse off with no threshold cross, and I>0'''
+        self.taum = np.mean([membrane_tau(trace[self.pulse_off_ix:self.pulse_off_ix+int(self.sampling_frequency*100)],
+                                          self.sampling_frequency)
+                             for (trace, I, crossed) in zip(data.T, self.I_inj, np.any(threshCross,axis=1))
+                             if ((np.abs(I)>0) and not crossed)]) # ms
+
+        '''Membrane capacitance calculation from Rin and taum'''
+        self.Cm = 1000*self.taum/self.Rin # pF
+
+        '''Estimate Slope of FI curve. Use I_inj at first non-zero spike count and initial increase as
+           starting parameters for search. Use only max 5 points above rheobase to prevent attempting
+           to fit to adapting FI curves.
+        '''
+        if self.spikeFreq.any():
+            rheo_p0       = rheobase(self.spikeFreq, self.I_inj)
+            slope_p0      = np.diff(np.nonzero(self.spikeFreq)[0])[0]/self.I_step
+
+            rheo, fISlope = estimatefISlope(self.spikeFreq, self.I_inj, p0=[rheo_p0,slope_p0])
+
+            self.rheobase = rheo
+            self.fISlope  = fISlope
+        else:
+            self.rheobase = np.nan
+            self.fISlope = np.nan
+
+        '''Get spike times from threshold crossings'''
+        self.spikeTimes = [self.time[1:][tc] for tc in threshCross]
+
+        '''Estimate adaptation ratio if there are at least three spikes in a sweep'''
+        self.adaptation_ratio = adaptation_ratio(self.spikeTimes[-1])
+
+        '''Indices for spike times'''
+        spikeix = [(sp*self.sampling_frequency).astype('int') for sp in self.spikeTimes]
+
+        '''For each spike...'''
+        ''' TODO: Make spike window selection smarter'''
+        v_thresh = []
+        v_amp = []
+        v_ahp = []
+        spikeHalfWidth = []
+        for sp,trace in zip(spikeix, data.T):
+            if np.any(sp):
+                for ix in sp:
+                    spikeTrace = trace[ix-29:ix+30] # Extract spike
+                    v_thresh.append(spike_threshold(spikeTrace[:30])) # estimate spike threshold
+                    v_amp.append(spike_amplitude(spikeTrace, v_thresh[-1])) # estimate spike amplitude
+                    v_ahp.append(ahp_amplitude(spikeTrace, v_thresh[-1])) # estimate ahp amplitude
+                    spikeHalfWidth.append(spike_halfwidth(spikeTrace, v_thresh[-1], v_amp[-1], self.sampling_frequency)) # estimate spike halfwidth
+
+        self.v_thresh = np.mean(v_thresh)
+        self.v_amp = np.mean(v_amp)
+        self.v_ahp = np.mean(v_ahp)
+        self.spikeHalfWidth = np.mean(spikeHalfWidth)
+
+        self.results = {'Vrest': self.v_rest*mV,'Input Resistance': self.Rin*MOhm,'Cell Capacitance': self.Cm*pF,
+                        'Rheobase':self.rheobase*nA,'fI slope':self.fISlope*Hz/nA, #'AHP amplitude' : self.ahpAmp*mV,
+                        'Adaptation Ratio':self.adaptation_ratio,'Sag Amplitude':self.v_sag*mV,
+                        'Spike Threshold':self.v_thresh*mV,'Spike Amplitude':self.v_amp*mV,
+                        'Spike Halfwidth':self.spikeHalfWidth*ms,'Membrane Time Constant':self.taum*ms}
+        
+    #------------------------------------------------------------------
+    #------------------------------------------------------------------
+
+    def plot(self, num_traces=3, fig_height=4, include_fI = True, include_results = True, savefig = True, closefig=False):
+        data = self.get_data()
+
+        width_ratio = 3;
+        if include_fI or include_results:
+            include_ratio = ((width_ratio, True), (1, include_fI), (1, include_results))
+            width_ratio = tuple([width for width,inc in include_ratio if inc])
+
+            fig_width = fig_height * 4. * np.sum(width_ratio)/5.
+            fig, axs = plt.subplots(ncols=len(width_ratio), figsize=(fig_width, fig_height), gridspec_kw={'width_ratios' : width_ratio})
+
+            plt.sca(axs[0])
+
+        else:
+            fig_width = fig_height * 2.4
+            fig = plt.figure(figsize=(fig_width, fig_height))
+
+        idxs = np.array([i in np.percentile(self.I_inj,
+                                            np.linspace(0, 100, num_traces),
+                                            interpolation='nearest')
+                         for i in self.I_inj])
+        
+        for ii,trace in enumerate(data.T[idxs]):
+            plt.plot(self.time, trace, color = plt.cm.plasma(np.linspace(0, 1, num_traces)[ii]), lw=1, zorder=-ii)
+            
+        plt.xlabel('Time (ms)')
+        plt.ylabel('Membrane Potential (mV)')
+        plt.legend(['I = %.2f'%I for I in self.I_inj[idxs]])
+        
+        plt.title('Cell ID: %s'%self.celldir+' %s'%self.fluor +' %s'%self.layer,fontsize=20)
+        
+        if include_fI:
+            plt.sca(axs[1])
+            plt.plot(self.I_inj, self.spikeFreq, 'o', ms=10)
+            I_fine = np.linspace(self.I_min-self.I_step, self.I_max+self.I_step, 1000)
+            plt.plot(I_fine, fICurve(I_fine, self.rheobase, self.fISlope), color='rebeccapurple', zorder=-1)
+            plt.xlabel('I$\mathrm{_{inj}} (nA)$')
+            plt.ylabel('Spike Frequency (Hz)')
+            
+        if include_results:
+            plt.sca(axs[-1])
+            plt.axis('off')
+            Y = np.linspace(0.05,0.9,len(self.results.keys()))
+            for ix,key in enumerate(self.results.keys()):
+                plt.text(x = 0.1,y = Y[ix],s = key+' = ' + str(np.round(self.results[key], 2)),
+                         transform=axs[-1].axes.transAxes, fontsize=14)
+                
+        if savefig:
+            fig.savefig(self.celldir+'/ephys_features.svg')
+            
+        if closefig:
+            fig.clf()
+            plt.close()
+            
+#-----------------------------------------------------------------------------------------------------
+#-----------------------------------------------------------------------------------------------------
+
+class Code(Cell):
+    def __init__(self, celldir, code_type, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+        super(Code, self).__init__(celldir)
+        assert code_type == 'rate' or code_type == 'temp', 'code_type \'%s\' not recognised'%code_type
+        
+        self.code_type          = code_type
+        self.file_type          = 'Rate' if self.code_type == 'rate' else 'Temporal' if self.code_type == 'temp' else None
+        
+        self.sampling_frequency = sampling_frequency # kHz
+        
+        self.start              = start # secs
+        self.dur                = dur   # secs
+        
+        self.exp_start          = int(start * self.sampling_frequency * 1000)
+        self.exp_dur            = int(dur * self.sampling_frequency * 1000)
+        self.exp_end            = self.exp_start + self.exp_dur
+        
+        self.stim_winsize       = stim_winsize
+        self.mono_winsize       = mono_winsize
+        
+        self.stim_winsteps      = int(stim_winsize*self.sampling_frequency)
+        self.mono_winsteps      = int(mono_winsize*self.sampling_frequency)
+        
+        self.time               = np.arange(0, self.dur, self.stim_winsize/1000.)
+        self.time_trace         = np.arange(self.exp_dur, dtype=float)/(self.sampling_frequency*1000)
+        
+        self.stimulus           = np.loadtxt('./stimulus/%scode.csv'%self.code_type, delimiter=',', skiprows=1)[:, 1:]/50
+        
+        sigBins,signal          = np.loadtxt('./stimulus/stim_signal.csv', delimiter= ',')
+        self.signal             = resample(signal,
+                                           cf= 1./np.diff(sigBins).min(),
+                                           nf= 1000/self.stim_winsize)
+
+        self.data_exists        = os.path.exists('./%s/%s.abf'%(self.celldir, self.file_type))
+            
+    def get_data(self):
+        if self.data_exists:
+            return load_episodic('./%s/%s.abf'%(self.celldir, self.file_type))[0][self.exp_start:self.exp_end, :, 0]
+    
+    def estimate_mutual_information(self):
+        if self.data_exists:
+            
+            data = self.get_data()
+            
+            self.results = {'Spikes'     : {},
+                            'Average Vm' : {},
+                            'Initial Slope' : []}
+
+            stim_winsize_secs = self.stim_winsize/1000.
+            mono_winsize_secs = self.mono_winsize/1000.
+
+            self.extract_slopes()
+            bins_all  = np.append(arr= self.time, values=self.dur).astype('float')
+            bins_mono = np.arange(0, self.dur + mono_winsize_secs, mono_winsize_secs, dtype=float)
+            binned_vm = binned_statistic(x = self.time_trace, values = data.T, statistic='mean', bins=bins_mono)[0]
+            mono_mask = (bins_mono[:-1]/mono_winsize_secs).round().astype('int') % int(stim_winsize_secs/mono_winsize_secs) < 1
+
+            self.average_Vm = {}
+
+            self.average_Vm['mono'] = binned_vm[:, mono_mask]
+            self.average_Vm['poly'] = binned_statistic(x = bins_mono[:-1][~mono_mask],
+                                                       values=binned_vm[:, ~mono_mask],
+                                                       statistic='mean', bins=bins_all)[0]
+            self.average_Vm['all']  = binned_statistic(x = bins_mono[:-1],
+                                                       values=binned_vm,
+                                                       statistic='mean', bins=bins_all)[0]
+
+
+            threshCrosses = findThreshCross(data)
+            self.spikeTimes = {'all' : [self.time_trace[1:][tc] for tc in threshCrosses.T]}
+            self.spikeTimes['mono'] = [spT[spT % stim_winsize_secs <  mono_winsize_secs] for spT in self.spikeTimes['all']]
+            self.spikeTimes['poly'] = [spT[spT % stim_winsize_secs >= mono_winsize_secs] for spT in self.spikeTimes['all']]
+
+            for key, times in self.spikeTimes.items():
+                self.spikeTimes[key] = [np.histogram(times_i, bins_all)[0] for times_i in times]
+
+
+            if self.code_type == 'rate':
+                # estimate mutual information conditioned on pre-synaptic spike count
+                preSpikes = self.stimulus.sum(axis=1)
+
+                # Initial Slope
+                self.results['Initial Slope'] = conditionalMutualInformation(s = self.signal[self.slopes.nonzero()],
+                                                                             r = self.slopes[self.slopes.nonzero()],
+                                                                             c = preSpikes[self.slopes.nonzero()])
+
+                # Spikes
+                for key, postSpikes in self.spikeTimes.items():
+                    self.results['Spikes'][key] = spikeConditionalMutualInformation(postSpikes=postSpikes,
+                                                                                    signal=self.signal,
+                                                                                    preSpikes=preSpikes)
+
+                for key, Vm in self.average_Vm.items():
+                    self.results['Average Vm'][key] = conditionalMutualInformation(s = np.tile(self.signal, Vm.shape[0]),
+                                                                                   r = np.ravel(Vm),
+                                                                                   c = np.tile(preSpikes, Vm.shape[0]))
+
+            elif self.code_type == 'temp':
+                # estimate mutual information
+
+                # Initial Slope
+                self.results['Initial Slope'] = mutualInformation(s = self.signal[self.slopes.nonzero()],
+                                                                  r = self.slopes[self.slopes.nonzero()])
+
+                # Spikes
+                for key, postSpikes in self.spikeTimes.items():
+                    self.results['Spikes'][key] = spikeMutualInformation(postSpikes=postSpikes,
+                                                                         signal=self.signal)
+
+                for key, Vm in self.average_Vm.items():
+                    self.results['Average Vm'][key] = mutualInformation(s = np.tile(self.signal, Vm.shape[0]),
+                                                                        r = np.ravel(Vm))
+        else:
+            self.results = {'Spikes'     : {'mono' : np.nan, 'poly' : np.nan, 'all' : np.nan},
+                            'Average Vm' : {'mono' : np.nan, 'poly' : np.nan, 'all' : np.nan},
+                            'Initial Slope' : np.nan}
+            
+                
+    def extract_slopes(self):
+        if self.data_exists:
+            if os.path.exists('%s/%s_slopes.csv'%(self.celldir, self.file_type)):
+                self.slopes = np.loadtxt('%s/%s_slopes.csv'%(self.celldir, self.file_type), delimiter=',')
+            else:
+                data = self.get_data()
+                
+                time = np.arange(self.mono_winsteps, dtype='float')/self.sampling_frequency
+                self.slopes = []
+                for ix,c in enumerate(self.stimulus):
+                    if c.any():
+                        sys.stdout.write('%i %% Done \r'%(np.round(ix*100./len(code))))
+                        syn_slope = []
+                        for trace in data[self.stim_winsteps*ix:self.stim_winsteps*ix+self.mono_winsteps].T:
+                            pars, pmodel, RSS, baseline = fitPiecewiseLinearFunction(time, trace)
+                            if pmodel > 0.99:
+                                syn_slope.append(pars[0])
+                            else:
+                                syn_slope.append(0)
+                        self.slopes.append(np.mean(syn_slope))
+
+                codeSlopes = np.zeros(len(code))
+                codeSlopes[code.any(axis=1)] = actualSlope
+                np.savetxt('%s/%s_slopes.csv'%(self.celldir, self.file_type), codeSlopes, delimiter=',')
+        else:
+            raise IOError('Cannot extract slopes. No data exists for cell %s'%self.cellid)
+    
+    def plot(self, figsize=(12, 10), savefig=True, closefig=False):
+        if self.data_exists:
+            data = self.get_data()
+            
+            fig, axs    = plt.subplots(nrows = 9, sharex=True, sharey=False, figsize=figsize,
+                                       gridspec_kw = {'height_ratios' : (2, 1, 6, 1, 3, 3, 3, 3, 3)})
+            
+            ax_sig = axs[0]; ax_stim = axs[2]; ax_resp = axs[4:];
+            axs[1].set_visible(False)
+            axs[3].set_visible(False)
+            
+            plt.sca(ax_sig)
+            ax_sig.xaxis.set_visible(False)
+            ax_sig.spines['bottom'].set_visible(False)
+            plt.plot(self.time, self.signal)
+            plt.yticks([0,1],['Low', 'High'])
+            plt.title('Signal', y=1.15)
+            
+            plt.sca(ax_stim)
+            ix, n = np.nonzero(self.stimulus)
+            plt.plot(self.time[ix], n+1, '|', ms=5)
+            plt.yticks([1,10])
+            plt.ylabel('Input #')
+            plt.title('%s Code'%self.file_type)
+            
+            for ix, trace in enumerate(data.T):
+                plt.sca(ax_resp[ix])
+                plt.plot(self.time_trace, trace, lw=1)
+                plt.yticks(np.linspace(-75, 75, 3))
+                plt.ylabel('Trial %i'%(ix+1), fontsize=12)
+                
+            ax_resp[2].text(s='Membrane Potential (mV)', x = -0.125, y=0.5, fontsize=16, transform=ax_resp[2].transAxes,
+                     rotation='vertical', verticalalignment='center', horizontalalignment='center')
+            ax_resp[0].set_title('Response')
+            plt.suptitle('Cell ID: %s %s %s, %s Code'%(self.cellid, self.fluor, self.layer, self.file_type))
+            plt.xlabel('Time (secs)')
+            
+            if savefig:
+                fig.savefig(self.celldir+'/%s_code_response.svg'%self.code_type)
+
+            if closefig:
+                fig.clf()
+                plt.close()
+            
+        else:
+            raise IOError('Cannot plot data. No data exists for cell %s'%self.cellid)
