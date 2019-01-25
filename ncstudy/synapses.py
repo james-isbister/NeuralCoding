@@ -92,18 +92,9 @@ def fitPiecewiseLinearFunction(t, x):
         p0 = p0_all[:2*ix]
         bounds = [bounds_lo[:2*ix],bounds_hi[:2*ix]]
         try:
-            popt,pcov = curve_fit(gldf_baseline,t,x,p0=p0,bounds=bounds,maxfev=1000)
+            popt,pcov = curve_fit(gldf_baseline,t,x,p0=p0,bounds=bounds,maxfev=10000)
         except RuntimeError:
-            try:
-                popt,pcov = curve_fit(gldf_baseline,t,x,p0=p0,bounds=bounds,maxfev=2000)
-            except RuntimeError:
-                try:
-                    popt,pcov = curve_fit(gldf_baseline,t,x,p0=p0,bounds=bounds,maxfev=5000)
-                except RuntimeError:
-                    try:
-                        popt,pcov = curve_fit(gldf_baseline,t,x,p0=p0,bounds=bounds,maxfev=10000)
-                    except RuntimeError:
-                        continue
+            continue
         xhat = gldf_baseline(t,*popt)
         RSSalt = np.sum((xhat-x)**2)
         bic = bicFromRSS(RSSalt,n=len(x),k=2*ix)

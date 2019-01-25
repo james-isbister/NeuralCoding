@@ -4,6 +4,10 @@ Date: 11 January 2019
 '''
 import numpy as np
 import scipy.stats as stats
+import pandas as pd
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler, Imputer
+
 from itertools import combinations
 
 def entropyEstimation(x,bins='auto'):
@@ -147,3 +151,27 @@ def MI_hypothesis_tests(df):
         test_dict['Pairs'][pair_string]['p'] = p_ttind
         
     return test_dict
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def ephys_pca(df_ephys):
+    features = df_ephys.columns.values[2:]
+    x = df_ephys.loc[:,features].values
+    y = df_ephys.loc[:,['Fluorescence']].values
+
+    #standardize data, used Imputer to handle NaN entries
+    imp = Imputer(strategy="mean", axis=0)
+    scale = StandardScaler()
+    x = scale.fit_transform(imp.fit_transform(x))
+    
+    pca = PCA(n_components=3)
+    principalComponents = pca.fit_transform(x)
+    df_pca = pd.DataFrame(data = principalComponents,
+                          columns = ['principal component 1', 'principal component 2', 'principal component 3'],
+                          index = df_ephys.index)
+    
+    return pd.concat([df_pca, df_ephys[['Fluorescence']]], axis = 1)
+    
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------

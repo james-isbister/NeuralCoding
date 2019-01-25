@@ -326,4 +326,3 @@ def spike_halfwidth(spikeTrace, Vthresh, spikeAmplitude, sampling_frequency):
 
     # Return difference between first and last time points above mid-voltage + additional time step for correction
     return time[-1] - time[0] + 1./sampling_frequency
-    

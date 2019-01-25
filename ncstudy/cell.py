@@ -10,7 +10,7 @@ from ephys import *
 from synapses import *
 from stats import *
 from .plots import add_inset_ax
-from .utils import load_episodic, resample
+from .utils import load_episodic, resample, hcf
 
 from quantities import pF, MOhm, nA, mV, ms, Hz
 import matplotlib.pyplot as plt
@@ -47,16 +47,16 @@ class Cell(object):
         if not os.path.exists(self.celldir+'/syn_features.svg'):
             self.syns.plot(closefig=True)
         
-    def estimate_MI(self, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+    def estimate_MI(self, stim_winsize, mono_winsize, delay, start, dur, sampling_frequency):
         
-        self.rate_code = Code(celldir= self.celldir, code_type= 'rate',
+        self.rate_code = Code(celldir= self.celldir, code_type= 'rate', delay = delay,
                               mono_winsize= mono_winsize, stim_winsize= stim_winsize,
                               start = start, dur = dur, sampling_frequency = sampling_frequency)
         self.rate_code.estimate_mutual_information()
         if self.rate_code.data_exists:
             self.rate_code.plot(closefig=True)
         
-        self.temp_code = Code(celldir= self.celldir, code_type= 'temp',
+        self.temp_code = Code(celldir= self.celldir, code_type= 'temp', delay = delay,
                               mono_winsize= mono_winsize, stim_winsize= stim_winsize,
                               start = start, dur = dur, sampling_frequency = sampling_frequency)
         self.temp_code.estimate_mutual_information()
@@ -147,22 +147,21 @@ class CellCollection(OrderedDict):
                         for key_b, item_b in self.MI['Temporal'][key_a].items():
                             self.MI['Temporal'][key_a][key_b].append(celln.temp_code.results[key_a][key_b]) 
 
-
-
-
 class Synapses(Cell):
     def __init__(self, celldir, mono_winsize, total_winsize, sampling_frequency):
         super(Synapses, self).__init__(celldir)
         
-        self.mono_winsize = int(mono_winsize*sampling_frequency) # in steps
-        self.total_winsize = int(total_winsize*sampling_frequency) # in steps
+        self.mono_winsize = mono_winsize
+        self.mono_winsteps = int(mono_winsize*sampling_frequency)
+        self.total_winsize = total_winsize
+        self.total_winsteps = int(total_winsize*sampling_frequency)
         self.sampling_frequency = sampling_frequency # kHz
-        self.time = np.arange(self.total_winsize, dtype=float)/self.sampling_frequency
+        self.time = np.arange(self.total_winsteps, dtype=float)/self.sampling_frequency
         
         self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
         self.synapses = dict([(ix, {'id' : self.presyn_ids[ix]}) for ix in range(10)])
 
-    def get_data():
+    def get_data(self):
         data = load_episodic(self.celldir + '/Synapse_finder.abf')
         Vm = data[0][:, self.presyn_ids, 0]
         pulse = data[0][:, :, 2]
@@ -170,10 +169,10 @@ class Synapses(Cell):
         
     def extract_features(self):
         Vm, pulse = self.get_data()
-        self.pulse_on = np.arange(1, len(self.pulse))[np.logical_and(self.pulse[1:, 0]>0.1, self.pulse[:-1, 0]<=0.1)]
+        self.pulse_on = np.arange(1, len(pulse))[np.logical_and(pulse[1:, 0]>0.1, pulse[:-1, 0]<=0.1)]
         
         for synapse_id, synapse in self.synapses.items():
-            synapse['data']     = np.array([Vm[p:p+self.total_winsize, synapse_id].T for p in self.pulse_on])
+            synapse['data']     = np.array([Vm[p:p+self.total_winsteps, synapse_id].T for p in self.pulse_on])
             synapse['pEarlyAP'] = 0.0
             synapse['pMono']    = 0.0
             synapse['delay']    = []
@@ -183,13 +182,13 @@ class Synapses(Cell):
             '''Estimate direct response properties'''
             
             for trace in synapse['data']:
-                pars, pmodel, RSS, baseline = fitPiecewiseLinearFunction(self.time[:self.mono_winsize], trace[:self.mono_winsize])
-                synapse['pEarlyAP'] += np.any(trace[:self.mono_winsize*2]>-25)*1.0/len(synapse['data'])
+                pars, pmodel, RSS, baseline = fitPiecewiseLinearFunction(self.time[:self.mono_winsteps], trace[:self.mono_winsteps])
+                synapse['pEarlyAP'] += np.any(trace[:self.mono_winsteps*2]>-25)*1.0/len(synapse['data'])
                 if pmodel >= 0.99:
                     synapse['pMono'] += 1./len(synapse['data'])
                     synapse['slope'].append(pars[0])
                     synapse['delay'].append(pars[1])
-                    synapse['mono_fit'].append(generalLinearDiscontinuousFn(self.time[:self.mono_winsize], baseline, *pars))
+                    synapse['mono_fit'].append(generalLinearDiscontinuousFn(self.time[:self.mono_winsteps], baseline, *pars))
                 else:
                     synapse['delay'].append(np.nan)
                     synapse['slope'].append(0.0)
@@ -232,11 +231,11 @@ class Synapses(Cell):
             
             ax_inset = add_inset_ax(axs[synapse_id], rect=[0.5, 0.5, 0.4, 0.4])
             plt.sca(ax_inset)
-            plt.plot(self.time[:self.mono_winsize], synapse['data'][:, :self.mono_winsize].T, lw=1, alpha=0.5, color='C0')
+            plt.plot(self.time[:self.mono_winsteps], synapse['data'][:, :self.mono_winsteps].T, lw=1, alpha=0.5, color='C0')
             plt.title('P(mono)=%.1f'%synapse['pMono'], fontsize=10)
 
             for rfit in synapse['mono_fit']:
-                plt.plot(self.time[:self.mono_winsize], rfit, color='C1', lw=1, alpha=0.5)
+                plt.plot(self.time[:self.mono_winsteps], rfit, color='C1', lw=1, alpha=0.5)
                 
         if savefig:
             fig.savefig(self.celldir+'/syn_features.svg')
@@ -418,7 +417,7 @@ class Electrophysiology(Cell):
 #-----------------------------------------------------------------------------------------------------
 
 class Code(Cell):
-    def __init__(self, celldir, code_type, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+    def __init__(self, celldir, code_type, delay, stim_winsize, mono_winsize, start, dur, sampling_frequency):
         super(Code, self).__init__(celldir)
         assert code_type == 'rate' or code_type == 'temp', 'code_type \'%s\' not recognised'%code_type
         
@@ -436,9 +435,11 @@ class Code(Cell):
         
         self.stim_winsize       = stim_winsize
         self.mono_winsize       = mono_winsize
+        self.delay              = delay
         
-        self.stim_winsteps      = int(stim_winsize*self.sampling_frequency)
-        self.mono_winsteps      = int(mono_winsize*self.sampling_frequency)
+        self.stim_winsteps      = int(self.stim_winsize*self.sampling_frequency)
+        self.mono_winsteps      = int(self.mono_winsize*self.sampling_frequency)
+        self.delaysteps         = int(self.delay*self.sampling_frequency)
         
         self.time               = np.arange(0, self.dur, self.stim_winsize/1000.)
         self.time_trace         = np.arange(self.exp_dur, dtype=float)/(self.sampling_frequency*1000)
@@ -467,26 +468,38 @@ class Code(Cell):
 
             stim_winsize_secs = self.stim_winsize/1000.
             mono_winsize_secs = self.mono_winsize/1000.
+            hcf_winsteps = hcf(self.stim_winsteps, self.mono_winsteps)
+            
+            hcf_winsize_secs = hcf_winsteps/(self.sampling_frequency*1000.)
+            delay_secs = self.delay/1000.
 
             self.extract_slopes()
             bins_all  = np.append(arr= self.time, values=self.dur).astype('float')
-            bins_mono = np.arange(0, self.dur + mono_winsize_secs, mono_winsize_secs, dtype=float)
-            binned_vm = binned_statistic(x = self.time_trace, values = data.T, statistic='mean', bins=bins_mono)[0]
-            mono_mask = (bins_mono[:-1]/mono_winsize_secs).round().astype('int') % int(stim_winsize_secs/mono_winsize_secs) < 1
+            bins_mono = np.arange(0, self.dur + hcf_winsize_secs, hcf_winsize_secs, dtype=float)
+            binned_vm = binned_statistic(x = self.time_trace - delay_secs,
+                                         values = data.T,
+                                         statistic='mean',
+                                         bins=bins_mono)[0]
+            mono_mask = (bins_mono[:-1]/hcf_winsize_secs).round().astype('int') % int(self.stim_winsteps/hcf_winsteps) < int(self.mono_winsteps/hcf_winsteps)
 
             self.average_Vm = {}
 
-            self.average_Vm['mono'] = binned_vm[:, mono_mask]
+            if int(self.mono_winsteps/hcf_winsteps) == 1:
+                self.average_Vm['mono'] = binned_vm[:, mono_mask]
+            else:
+                self.average_Vm['mono'] = binned_statistic(x = bins_mono[:-1][mono_mask],
+                                                           values = binned_vm[:, mono_mask],
+                                                           statistic=np.nanmean, bins=bins_all)[0]
             self.average_Vm['poly'] = binned_statistic(x = bins_mono[:-1][~mono_mask],
                                                        values=binned_vm[:, ~mono_mask],
-                                                       statistic='mean', bins=bins_all)[0]
+                                                       statistic=np.nanmean, bins=bins_all)[0]
             self.average_Vm['all']  = binned_statistic(x = bins_mono[:-1],
                                                        values=binned_vm,
-                                                       statistic='mean', bins=bins_all)[0]
+                                                       statistic=np.nanmean, bins=bins_all)[0]
 
 
             threshCrosses = findThreshCross(data)
-            self.spikeTimes = {'all' : [self.time_trace[1:][tc] for tc in threshCrosses.T]}
+            self.spikeTimes = {'all' : [self.time_trace[1:][tc] - delay_secs for tc in threshCrosses.T]}
             self.spikeTimes['mono'] = [spT[spT % stim_winsize_secs <  mono_winsize_secs] for spT in self.spikeTimes['all']]
             self.spikeTimes['poly'] = [spT[spT % stim_winsize_secs >= mono_winsize_secs] for spT in self.spikeTimes['all']]
 

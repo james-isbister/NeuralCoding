@@ -1,5 +1,9 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from itertools import combinations
+from scipy.cluster.hierarchy import dendrogram, linkage
+from pandas.plotting import scatter_matrix
+from sklearn.preprocessing import StandardScaler, Imputer
 
 def add_inset_ax(ax,rect):
     
@@ -70,6 +74,17 @@ def plot_ephys_summary(df_ephys, figsize=(12,12)):
         plt.xticks(range(3), fluors)
     fig.subplots_adjust(hspace=0.4)
     return fig
+
+def plot_ephys_scatter(df, figsize=(12,12)):
+    axs = scatter_matrix(df, alpha=0.2,figsize=(13,13), diagonal='kde')
+    for ax in np.ravel(axs):
+        ax.set_xlabel(ax.get_xlabel().replace(' ', '\n'), fontsize=11)
+        ax.set_ylabel(ax.get_ylabel().replace(' ', '\n'), fontsize=11)
+        ax.spines['top'].set_visible(True)
+        ax.spines['right'].set_visible(True)
+        ax.yaxis.set_label_coords(-0.4, 0.5)
+        ax.xaxis.set_label_coords(0.5, -0.4)
+    return plt.gcf()
 
 def plot_syn_reliability(df_rel, figsize=(3,4)):
     fluors = ['NF', 'PV+', 'SST+']
@@ -158,4 +173,55 @@ def test_to_string(test_dict, num_comparisons):
         
     return result
             
+def plot_pca(df, figsize=(15, 5)):
+    fig, axs = plt.subplots(nrows=1, ncols=3, sharex=True, sharey=True, figsize=figsize)
+    pairs_ix = list(combinations(range(len(df.columns)-1), r=2))
+    Fluorescence = ['NF', 'PV+', 'SST+']
+    colors = ['#F5A623', '#4A90E2', '#7ED321']
+    for ax, (ix1, ix2) in zip(axs, pairs_ix):
+        plt.sca(ax)
+        plt.xlabel('Principal Component %i'%(ix1+1), fontsize = 15)
+        plt.ylabel('Principal Component %i'%(ix2+1), fontsize = 15)
+        
+        for target, color in zip(Fluorescence,colors):
+            indicesToKeep = df['Fluorescence'] == target
+            plt.scatter(df.loc[indicesToKeep, 'principal component %i'%(ix1+1)],
+                       df.loc[indicesToKeep, 'principal component %i'%(ix2+1)],
+                       c = color,
+                       s = 100)
+    plt.legend(Fluorescence)
+    return fig
+
+def plot_dendrogram(df, figsize=(25, 10)):
+    
+    x = df.select_dtypes(np.number).as_matrix()
+    imp = Imputer(strategy="mean", axis=0)
+    scale = StandardScaler()
+    x = scale.fit_transform(imp.fit_transform(x))
+
+    #ward's linkage dendrogram
+    Z = linkage(x, 'ward')
+    fig= plt.figure(figsize=figsize)
+    plt.title('Hierarchical Clustering Dendrogram')
+    plt.xlabel('sample index')
+    plt.ylabel('distance')
+    dendrogram(
+        Z,
+        leaf_rotation=90.,  # rotates the x axis labels
+        leaf_font_size=8.,  # font size for the x axis labels
+        labels=df['Fluorescence']
+    )
+    ax = fig.axes[0]
+    
+    fluors = ['NF', 'PV+', 'SST+']
+    colors = ['#F5A623', '#4A90E2', '#7ED321']
+    for tl in ax.xaxis.get_ticklabels():
+        color = [c for c,fl in zip(colors, fluors) if fl == tl.get_text()][0]
+        tl.set_color(color)
+
+    ax.set_xlabel('Cell type', fontsize=16)
+    ax.set_ylabel('Distance', fontsize=16)
+    
+    return fig
+
     

@@ -16,7 +16,7 @@ import cell
 import ephys
 import plots
 from .utils import load_episodic, convert_quantity, merge_dicts
-from .stats import MI_hypothesis_tests
+from .stats import MI_hypothesis_tests, ephys_pca
 
 class Analysis(object):
     
@@ -33,7 +33,7 @@ class Analysis(object):
         for cell_id in self.cell_ids:
             self.cells.add(cell.Cell('%s/%s'%(self.data_path,cell_id)))
 
-    def load(self):
+    def load(self, redo_ephys=False, redo_syns=False, redo_MI=False):
         tqdm.tqdm.write('Loading...')
 
         self.incomplete = {'ephys' : [],
@@ -43,7 +43,7 @@ class Analysis(object):
         
         for cellid in tqdm.tqdm(self.cells.keys()):
             celln = self.cells[cellid]
-            if os.path.exists(celln.celldir + '/ephys.yaml'):
+            if os.path.exists(celln.celldir + '/ephys.yaml') and not redo_ephys:
                 state = yaml.load(open(celln.celldir + '/ephys.yaml', 'r'))
                 celln.ephys = cell.Electrophysiology(celldir  = celln.celldir,
                                                      pulse_on =state['Experiment']['pulse_on'],
@@ -72,7 +72,7 @@ class Analysis(object):
             else:
                 self.incomplete['ephys'].append(cellid)
                 
-            if os.path.exists(celln.celldir + '/syns.yaml'):
+            if os.path.exists(celln.celldir + '/syns.yaml') and not redo_syns:
                 state = yaml.load(open(celln.celldir+'/syns.yaml', 'r'))
                 celln.syns = cell.Synapses(celldir=celln.celldir,
                                            mono_winsize=state['Experiment']['mono_winsize'],
@@ -85,7 +85,7 @@ class Analysis(object):
             else:
                 self.incomplete['syns'].append(cellid)
                 
-            if os.path.exists(celln.celldir + '/MI.yaml'):
+            if os.path.exists(celln.celldir + '/MI.yaml') and not redo_MI:
                 state = yaml.load(open(celln.celldir+'/MI.yaml', 'r'))
                 
                 celln.rate_code = cell.Code(celldir= celln.celldir, code_type='rate',
@@ -160,14 +160,14 @@ class Analysis(object):
                 
             if cellid in self.incomplete['MI']:
                 celln.estimate_MI(stim_winsize=50, mono_winsize=5,
-                                  start=5, dur=50, sampling_frequency=10)
+                                  start=5, dur=50, sampling_frequency=10, delay=0)
                 
         self.incomplete = {'ephys' : [],
                            'syns' : [],
                            'MI' : []}
         
-    def run(self, reliability_threshold=0.9, replace_mono_with_slopes=False, fig_dir='./'):
-        self.load()
+    def run(self, redo_ephys=False, redo_syns=False, redo_MI=False, reliability_threshold=0.9, replace_mono_with_slopes=False, fig_dir='./'):
+        self.load(redo_ephys=redo_ephys, redo_syns=redo_syns, redo_MI=redo_MI)
         self.update()
         self.cells.collect_results()
         
@@ -189,6 +189,16 @@ class Analysis(object):
         self.fig_ephys   = plots.plot_ephys_summary(self.df_ephys)
         self.fig_fi      = plots.plot_fICurves(self.cells)
         
+        df_ephys_transform = self.df_ephys.drop(['Adaptation Ratio', 'Vrest (mV)'], 1)
+        df_ephys_transform['log(Adaptation Ratio)'] = self.df_ephys['Adaptation Ratio'].apply(np.log)
+        self.fig_scatter = plots.plot_ephys_scatter(df_ephys_transform)
+        
+        self.df_pca      = ephys_pca(df_ephys_transform)
+        self.fig_pca     = plots.plot_pca(self.df_pca)
+        
+        self.fig_dend    = plots.plot_dendrogram(df_ephys_transform)
+        del df_ephys_transform
+        
         df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.syns), index=self.cells.keys())
         self.df_syns     = df[df['Layer']=='L2/3']
         
@@ -201,29 +211,50 @@ class Analysis(object):
         codes = ['Rate', 'Temporal']
         resps = ['Spikes', 'Average Vm']
         wins  = ['mono', 'poly', 'all']
+        
+        df_criteria = pd.DataFrame(merge_dicts(self.cells.metadata, self.cells.syns, self.cells.ephys), 
+                                   index=self.cells.keys())
+        
+        ## Inclusion Criteria ##
+        # Include if cell in L2/3 and input reliability > 0.9
+        inclusion_criteria = np.logical_and(df_criteria['Layer']=='L2/3',
+                                            df_criteria['Reliability'] > reliability_threshold)
+        # Exlude if fast-spiking NF cell
+        exclusion_criteria = np.logical_and(df_criteria['Fluorescence']=='NF',
+                                            df_criteria['fI slope (Hz/nA)'] > 500)
+        # Combine Criteria
+        criteria = np.logical_and(inclusion_criteria, ~exclusion_criteria)
+
         for code in codes:
             self.results[code] = {}
             for resp in resps:
                 self.results[code][resp] = {}
                 for win in wins:
                     self.results[code][resp][win] = {}
-                    df = pd.DataFrame(merge_dicts(self.cells.metadata, self.cells.syns), index=self.cells.keys())
+                    df_MI = df
+
                     if replace_mono_with_slopes and resp=='Average Vm' and win=='mono': 
-                        df['MI'] = self.cells.MI[code]['Initial Slope']
+                        df_MI['MI'] = self.cells.MI[code]['Initial Slope']
                     else:
-                        df['MI'] = self.cells.MI[code][resp][win]
-                    df = df[np.logical_and(df['Layer']=='L2/3', df['Reliability'] > reliability_threshold)]
-                    df = df.dropna()[['Fluorescence', 'MI']]
-                    self.results[code][resp][win]['df']    = df
-                    self.results[code][resp][win]['tests'] = MI_hypothesis_tests(df)
-                    self.results[code][resp][win]['fig']   = plots.plot_MI(df, num_comparisons=len(codes)*len(wins),
+                        df_MI['MI'] = self.cells.MI[code][resp][win]
+                        
+                    df_MI = df_MI[criteria]
+                    df_MI = df_MI[['Fluorescence', 'MI']]
+                    df_MI = df_MI.dropna()
+                    self.results[code][resp][win]['df']    = df_MI
+                    self.results[code][resp][win]['tests'] = MI_hypothesis_tests(df_MI)
+                    self.results[code][resp][win]['fig']   = plots.plot_MI(df_MI, num_comparisons=len(codes)*len(wins),
                                                                            title_string='%s - %s - %s'%(code, resp, win),
                                                                            tests=self.results[code][resp][win]['tests'])
-                    self.results[code][resp][win]['fig'].savefig(fig_dir + '%s_%s_%s_MI.svg'%(code,
+                    self.results[code][resp][win]['fig'].savefig(fig_dir + '/%s_%s_%s_MI.svg'%(code,
                                                                                               resp.replace(' ', ''),
                                                                                               win))
         
         self.fig_ephys.savefig(fig_dir+'/ephys_features.svg')
+        self.fig_scatter.savefig(fig_dir+'/ephys_scatter.svg')
+        self.fig_pca.savefig(fig_dir+'/ephys_pca.svg')
+        self.fig_dend.savefig(fig_dir+'/ephys_dendrogram.svg')
+        
         self.fig_fi.savefig(fig_dir+'/fI_curves.svg')
         self.fig_monorel.savefig(fig_dir+'/reliability.svg')
         self.fig_mean_dly.savefig(fig_dir+'/mean_delay.svg')

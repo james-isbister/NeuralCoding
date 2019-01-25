@@ -105,4 +105,5 @@ def highestCommonFactor(x, y):
         (x, y) = (y, x % y)
     return x
 
-hcf = highestCommonFactor
+def hcf(x,y):
+    return highestCommonFactor(x, y)
