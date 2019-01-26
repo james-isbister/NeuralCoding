@@ -2,16 +2,16 @@
 
 This repository contains the analysis code for data published in Tran et al (2019). This code has been written in python 2.7, and has the following requirements:
 
-matplotlib == 2.1.2
-numpy == 1.14.1
-scipy == 1.0.0
-pandas == 0.22.0
-neo == 0.5.2
-sklearn == 0.19.1
-tqdm == 4.29.1
-yaml == 3.13
+matplotlib == 2.1.2  
+numpy == 1.14.1  
+scipy == 1.0.0  
+pandas == 0.22.0  
+neo == 0.5.2  
+sklearn == 0.19.1  
+tqdm == 4.29.1  
+yaml == 3.13  
 
-If you have any issues with compatibility, please fill out an issue report, or email luke.prince@utoronto.ca
+If you have any issues with compatibility, please fill out an issue report.
 
 The analysis functions are split into three sections: electrophysiology (ncstudy.ephys) used to measure the electrophysiological properties of recorded cells in response to step currents, synaptic (ncstudy.synapses) used to measure the fidelity of the optogenetically stimulated presynaptic inputs to the electrophysiological recorded postsynaptic cell, and statistics (ncstudy.stats) used to estimate the mutual information between the underlying signal and the postsynaptic cell response.
 
