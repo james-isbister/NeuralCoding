@@ -4,6 +4,7 @@ Date: 11 January 2019
 '''
 
 import os
+import sys
 from collections import OrderedDict
 
 from ephys import *
@@ -559,7 +560,7 @@ class Code(Cell):
                 self.slopes = []
                 for ix,c in enumerate(self.stimulus):
                     if c.any():
-                        sys.stdout.write('%i %% Done \r'%(np.round(ix*100./len(code))))
+                        sys.stdout.write('%i %% Done \r'%(np.round(ix*100./len(self.stimulus))))
                         syn_slope = []
                         for trace in data[self.stim_winsteps*ix:self.stim_winsteps*ix+self.mono_winsteps].T:
                             pars, pmodel, RSS, baseline = fitPiecewiseLinearFunction(time, trace)
@@ -569,8 +570,9 @@ class Code(Cell):
                                 syn_slope.append(0)
                         self.slopes.append(np.mean(syn_slope))
 
-                codeSlopes = np.zeros(len(code))
-                codeSlopes[code.any(axis=1)] = actualSlope
+                codeSlopes = np.zeros(len(self.stimulus))
+                codeSlopes[self.stimulus.any(axis=1)] = np.array(self.slopes)
+                self.slopes = codeSlopes
                 np.savetxt('%s/%s_slopes.csv'%(self.celldir, self.file_type), codeSlopes, delimiter=',')
         else:
             raise IOError('Cannot extract slopes. No data exists for cell %s'%self.cellid)

@@ -88,7 +88,7 @@ class Analysis(object):
             if os.path.exists(celln.celldir + '/MI.yaml') and not redo_MI:
                 state = yaml.load(open(celln.celldir+'/MI.yaml', 'r'))
                 
-                celln.rate_code = cell.Code(celldir= celln.celldir, code_type='rate',
+                celln.rate_code = cell.Code(celldir= celln.celldir, code_type='rate', delay=0,
                                             mono_winsize       = state['Params']['Rate']['mono_winsize'],
                                             stim_winsize       = state['Params']['Rate']['stim_winsize'],
                                             start              = state['Params']['Rate']['start'],
@@ -97,7 +97,7 @@ class Analysis(object):
                 
                 celln.rate_code.results = state['Results']['Rate']
                 
-                celln.temp_code = cell.Code(celldir= celln.celldir, code_type='temp',
+                celln.temp_code = cell.Code(celldir= celln.celldir, code_type='temp', delay=0,
                                             mono_winsize       = state['Params']['Temporal']['mono_winsize'],
                                             stim_winsize       = state['Params']['Temporal']['stim_winsize'],
                                             start              = state['Params']['Temporal']['start'],
@@ -156,6 +156,10 @@ class Analysis(object):
                 celln.extract_ephys(pulse_on = 266, pulse_len = 500, sampling_frequency = 10.,
                                     I_min = -0.08, I_max = 0.4, I_step = 0.04)
             if cellid in self.incomplete['syns']:
+                df = pd.read_csv('./data/stimcellids.csv', index_col=0, header=None)
+                df = df.loc[celln.cellid] - 1
+                df.to_csv(celln.celldir+'/presyn_ids.csv', index=False)
+                
                 celln.extract_syns(mono_winsize=5, total_winsize=200, sampling_frequency=10.)
                 
             if cellid in self.incomplete['MI']:
