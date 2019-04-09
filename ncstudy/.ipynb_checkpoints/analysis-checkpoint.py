@@ -229,9 +229,6 @@ class Analysis(object):
         # Combine Criteria
         criteria = np.logical_and(inclusion_criteria, ~exclusion_criteria)
 
-        df_criteria['include'] = criteria
-        self.df_criteria = df_criteria
-
         for code in codes:
             self.results[code] = {}
             for resp in resps:
