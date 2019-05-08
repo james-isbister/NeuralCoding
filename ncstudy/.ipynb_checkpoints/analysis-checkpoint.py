@@ -97,6 +97,9 @@ class Analysis(object):
                 
                 celln.rate_code.results = state['Results']['Rate']
                 
+                if celln.rate_code.data_exists:                
+                    celln.rate_code.spikeTimes = state['SpikeTimes']['Rate']
+                
                 celln.temp_code = cell.Code(celldir= celln.celldir, code_type='temp', delay=celln.syns.max_delay,
                                             mono_winsize       = state['Params']['Temporal']['mono_winsize'],
                                             stim_winsize       = state['Params']['Temporal']['stim_winsize'],
@@ -105,6 +108,9 @@ class Analysis(object):
                                             sampling_frequency = state['Params']['Temporal']['sampling_frequency'])
                 
                 celln.temp_code.results = state['Results']['Temporal']
+                
+                if celln.temp_code.data_exists:
+                    celln.temp_code.spikeTimes = state['SpikeTimes']['Temporal']
             else:
                 self.incomplete['MI'].append(cellid)
 
@@ -145,7 +151,13 @@ class Analysis(object):
                                                    'mono_winsize' : celln.temp_code.mono_winsize,
                                                    'start' : celln.temp_code.start,
                                                    'dur' : celln.temp_code.dur,
-                                                   'sampling_frequency' : celln.temp_code.sampling_frequency}}}
+                                                   'sampling_frequency' : celln.temp_code.sampling_frequency}},
+                       'SpikeTimes' : {}}
+            
+            if celln.rate_code.data_exists:
+                MI_state['SpikeTimes']['Rate'] = celln.rate_code.spikeTimes
+            if celln.temp_code.data_exists:
+                MI_state['SpikeTimes']['Temporal'] = celln.temp_code.spikeTimes
             yaml.dump(MI_state, open(celln.celldir + '/MI.yaml', 'w'))
         
     def update(self):
@@ -228,6 +240,9 @@ class Analysis(object):
                                             df_criteria['fI slope (Hz/nA)'] > 500)
         # Combine Criteria
         criteria = np.logical_and(inclusion_criteria, ~exclusion_criteria)
+
+        df_criteria['include'] = criteria
+        self.df_criteria = df_criteria
 
         for code in codes:
             self.results[code] = {}
