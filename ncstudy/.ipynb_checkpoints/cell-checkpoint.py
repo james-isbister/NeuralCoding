@@ -10,7 +10,7 @@ from collections import OrderedDict
 from ephys import *
 from synapses import *
 from stats import *
-from .plots import add_inset_ax
+from .plots import add_inset_ax, plot_mixture_cutoff
 from .utils import load_episodic, resample, hcf
 
 from quantities import pF, MOhm, nA, mV, ms, Hz
@@ -18,6 +18,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import binned_statistic
+from sklearn.mixture import BayesianGaussianMixture, GaussianMixture
+from scipy.optimize import brentq
 
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
@@ -48,23 +50,89 @@ class Cell(object):
         if not os.path.exists(self.celldir+'/syn_features.svg'):
             self.syns.plot(closefig=True)
         
-    def estimate_MI(self, stim_winsize, mono_winsize, delay, start, dur, sampling_frequency):
+    def initialize_MI(self, stim_winsize, mono_winsize, delay, start, dur, sampling_frequency):
         
         self.rate_code = Code(celldir= self.celldir, code_type= 'rate', delay = delay,
                               mono_winsize= mono_winsize, stim_winsize= stim_winsize,
                               start = start, dur = dur, sampling_frequency = sampling_frequency)
-        self.rate_code.estimate_mutual_information()
-        if self.rate_code.data_exists:
-            self.rate_code.plot(closefig=True)
         
         self.temp_code = Code(celldir= self.celldir, code_type= 'temp', delay = delay,
                               mono_winsize= mono_winsize, stim_winsize= stim_winsize,
                               start = start, dur = dur, sampling_frequency = sampling_frequency)
+        
+        self.cutoff = self.estimate_early_late_cutoff(bayes=True, fit_lognormal=True, n_inits=30, plot=True)
+        self.rate_code.early_winsize = self.cutoff
+        self.temp_code.early_winsize = self.cutoff
+        
+    def estimate_MI(self):
+        
+        self.rate_code.estimate_mutual_information()
+        if self.rate_code.data_exists:
+            self.rate_code.plot(closefig=True)
+            self.rate_code.hist(closefig=True, savefig=True)
+        
         self.temp_code.estimate_mutual_information()
         if self.temp_code.data_exists:
             self.temp_code.plot(closefig=True)
+            self.temp_code.hist(closefig=True)
             
         plt.close('all')
+        
+    def estimate_early_late_cutoff(self, bayes=False, fit_lognormal=False, n_inits=30, plot=True):
+        spikeTimes = np.array([])
+        if hasattr(self, 'rate_code'):
+            if hasattr(self.rate_code, 'spikeTimes'):
+                spikeTimes = np.concatenate((spikeTimes, np.concatenate(self.rate_code.spikeTimes['all'])))
+        if hasattr(self, 'temp_code'):
+            if hasattr(self.temp_code, 'spikeTimes'):
+                spikeTimes = np.concatenate((spikeTimes, np.concatenate(self.temp_code.spikeTimes['all'])))
+
+        if np.any(spikeTimes) and len(spikeTimes) > 10:
+            phases = spikeTimes_to_phase(spikeTimes= spikeTimes, frequency=20)
+
+            if fit_lognormal:
+                X = np.log(phases)
+            else:
+                X = phases
+
+            if bayes:
+                model = BayesianGaussianMixture
+            else:
+                model = GaussianMixture
+
+            M1 = model(n_components=1, n_init=n_inits).fit(X.reshape(-1, 1))
+            M2 = model(n_components=2, n_init=n_inits).fit(X.reshape(-1, 1))
+
+            M2_accept = M2.lower_bound_ > M1.lower_bound_
+            M2_reject_1 = np.logical_or(np.all(M2.predict(M2.means_)==1),
+                                        np.all(M2.predict(M2.means_)==0))
+            M2_reject_2 = np.isclose(*M2.means_.squeeze(), rtol=1e-1)
+            M2_reject = M2_reject_1 or M2_reject_2
+
+
+            if M2_accept and not M2_reject:
+                f = lambda x : M2.predict_proba(np.reshape(x, (1, -1)))[:, 0] - 0.5
+                cutoff = brentq(f, a= M2.means_.squeeze()[0], b = M2.means_.squeeze()[1])
+                if fit_lognormal:
+                    cutoff = np.exp(cutoff) * 25 / np.pi
+
+                else:
+                    cutoff*= 25/np.pi
+
+                if plot:
+                    fig = plot_mixture_cutoff(X, M2, lognormal=fit_lognormal, cutoff=cutoff)
+                    plt.title('%s %s'%(self.fluor, self.cellid))
+                    fig.savefig(self.celldir+'/mixture_cutoff.svg')
+
+                return cutoff
+            else:
+                if plot:
+                    fig = plot_mixture_cutoff(X, M1, lognormal=fit_lognormal)
+                    plt.title('%s %s'%(self.fluor, self.cellid))
+                    fig.savefig(self.celldir+'/mixture_cutoff.svg')
+                return np.nan
+
+        return np.nan
         
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
@@ -124,14 +192,17 @@ class CellCollection(OrderedDict):
                 self.syns['Max Delay'].append(celln.syns.max_delay)
                 
     def collect_MI(self):
-        self.MI = {'Rate' : {'Spikes'     : {'mono': [] , 'poly' : [], 'all' : []},
-                             'Average Vm' : {'mono': [] , 'poly' : [], 'all' : []},
+        self.MI = {'Rate' : {'Spikes'     : {'mono' : [], 'poly' : [], 'early': [] , 'late' : [], 'all' : []},
+                             'Average Vm' : {'mono' : [], 'poly' : [], 'all' :  []},
                              'Initial Slope' : []},
-                   'Temporal' : {'Spikes'     : {'mono': [] , 'poly' : [], 'all' : []},
-                             'Average Vm' : {'mono': [] , 'poly' : [], 'all' : []},
-                             'Initial Slope' : []}}
+                   'Temporal' : {'Spikes' : {'mono' : [], 'poly' : [], 'early': [] , 'late' : [], 'all' : []},
+                             'Average Vm' : {'mono' : [], 'poly' : [], 'all' :  []},
+                             'Initial Slope' : []},
+                   'cutoff' : [] }
         
         for cellid, celln in self.items():
+            self.MI['cutoff'].append(celln.cutoff)
+            
             if hasattr(celln, 'rate_code'):
                 for key_a, item_a in self.MI['Rate'].items():
                     if type(item_a) is list:
@@ -453,10 +524,18 @@ class Code(Cell):
                                            nf= 1000/self.stim_winsize)
 
         self.data_exists        = os.path.exists('./%s/%s.abf'%(self.celldir, self.file_type))
+        
+        self.get_spikeTimes()
             
     def get_data(self):
         if self.data_exists:
             return load_episodic('./%s/%s.abf'%(self.celldir, self.file_type))[0][self.exp_start:self.exp_end, :, 0]
+        
+    def get_spikeTimes(self):
+        if self.data_exists:
+            data = self.get_data()
+            threshCrosses = findThreshCross(data)
+            self.spikeTimes = {'all' : [self.time_trace[1:][tc] for tc in threshCrosses.T]}
     
     def estimate_mutual_information(self):
         if self.data_exists:
@@ -466,13 +545,15 @@ class Code(Cell):
             self.results = {'Spikes'     : {},
                             'Average Vm' : {},
                             'Initial Slope' : []}
-
-            stim_winsize_secs = self.stim_winsize/1000.
-            mono_winsize_secs = self.mono_winsize/1000.
+            
+            delay_secs         = self.delay/1000.
+            stim_winsize_secs  = self.stim_winsize/1000.
+            mono_winsize_secs  = self.mono_winsize/1000.
+            early_winsize_secs = self.early_winsize/1000.
             hcf_winsteps = hcf(self.stim_winsteps, self.mono_winsteps)
             
             hcf_winsize_secs = hcf_winsteps/(self.sampling_frequency*1000.)
-            delay_secs = self.delay/1000.
+            
 
             self.extract_slopes()
             bins_all  = np.append(arr= self.time, values=self.dur).astype('float')
@@ -500,9 +581,11 @@ class Code(Cell):
 
 
             threshCrosses = findThreshCross(data)
-            self.spikeTimes = {'all' : [self.time_trace[1:][tc] - delay_secs for tc in threshCrosses.T]}
-            self.spikeTimes['mono'] = [spT[spT % stim_winsize_secs <  mono_winsize_secs] for spT in self.spikeTimes['all']]
-            self.spikeTimes['poly'] = [spT[spT % stim_winsize_secs >= mono_winsize_secs] for spT in self.spikeTimes['all']]
+            self.spikeTimes['mono']  = [spT[spT % stim_winsize_secs <  (mono_winsize_secs + delay_secs)] for spT in self.spikeTimes['all']]
+            self.spikeTimes['poly']  = [spT[spT % stim_winsize_secs >= (mono_winsize_secs + delay_secs)] for spT in self.spikeTimes['all']]
+            
+            self.spikeTimes['early'] = [spT[spT % stim_winsize_secs < early_winsize_secs] for spT in self.spikeTimes['all']]
+            self.spikeTimes['late']  = [spT[spT % stim_winsize_secs >= early_winsize_secs] for spT in self.spikeTimes['all']]
             
             self.spikeCounts = {}
 
@@ -546,7 +629,7 @@ class Code(Cell):
                     self.results['Average Vm'][key] = mutualInformation(s = np.tile(self.signal, Vm.shape[0]),
                                                                         r = np.ravel(Vm))
         else:
-            self.results = {'Spikes'     : {'mono' : np.nan, 'poly' : np.nan, 'all' : np.nan},
+            self.results = {'Spikes'     : {'mono' : np.nan, 'poly' : np.nan, 'early' : np.nan, 'late' : np.nan, 'all' : np.nan},
                             'Average Vm' : {'mono' : np.nan, 'poly' : np.nan, 'all' : np.nan},
                             'Initial Slope' : np.nan}
             
@@ -579,6 +662,104 @@ class Code(Cell):
         else:
             raise IOError('Cannot extract slopes. No data exists for cell %s'%self.cellid)
     
+    def hist(self, figsize=(6, 4), savefig=True, closefig=False):
+        if self.data_exists:
+            signal          = np.tile(self.signal, len(self.spikeCounts['all']))
+            preSpikeCounts  = np.tile(self.stimulus.sum(axis=1), len(self.spikeCounts['all']))
+            postSpikeCounts = np.concatenate(self.spikeCounts['all'])
+            average_Vm       = np.concatenate(self.average_Vm['all'])
+            
+            bins_signal = np.arange(0, np.max(signal) + 1.5)
+            bins_pre    = np.arange(0, np.max(preSpikeCounts) + 1.5)
+            bins_post   = np.arange(0, np.max(postSpikeCounts) + 1.5)
+            bins_avVm   = np.histogram(average_Vm, bins='auto')[1]
+            
+            fig_width, fig_height= figsize
+            
+            if self.code_type is 'rate':
+                
+                fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height * 3), nrows=3, ncols=2)
+                
+                plt.sca(axs[0,0])
+                plt.bar(0, 1-np.mean(signal))
+                plt.bar(1, np.mean(signal))
+                plt.xlabel('Signal State')
+                
+                plt.xticks([0, 1], ['Low', 'High'])
+                plt.ylabel('Probability(State)')
+                
+                plt.sca(axs[0,1])
+                plt.hist(preSpikeCounts[signal==0], bins=bins_pre, alpha=0.5, density=True)
+                plt.hist(preSpikeCounts[signal==1], bins=bins_pre, alpha=0.5, density=True)
+
+                plt.hist(preSpikeCounts[signal==0], bins=bins_pre, histtype='step', lw=5, color='C0', density=True)
+                plt.hist(preSpikeCounts[signal==1], bins=bins_pre, histtype='step', lw=5, color='C1', density=True)
+
+                plt.xlabel('Presynaptic Stimulus Count')
+                plt.ylabel('Probability (Count | State)')
+
+                legend = plt.legend(['Low', 'High'])
+                plt.setp(legend.get_title(),fontsize=16)
+                
+                plt.sca(axs[1,0])
+                plt.hist2d(preSpikeCounts[signal==0], postSpikeCounts[signal==0], bins=[bins_pre, bins_post], normed=True)
+                plt.xlabel('Presynaptic Stimulus Count')
+                plt.ylabel('Postsynaptic Stimulus Count')
+                plt.colorbar(fraction=0.05, label='Pr(Pre Count, Post Count | State = Low)')
+                
+                plt.sca(axs[1,1])
+                plt.hist2d(preSpikeCounts[signal==1], postSpikeCounts[signal==1], bins=[bins_pre, bins_post], normed=True)
+                plt.xlabel('Presynaptic Stimulus Count')
+                plt.ylabel('Postsynaptic Stimulus Count')
+                plt.colorbar(fraction=0.05, label='Pr(Pre Count, Post Count | State = High)')
+                
+                plt.sca(axs[2,0])
+                plt.hist2d(preSpikeCounts[signal==0], average_Vm[signal==0], bins=[bins_pre, bins_avVm], normed=True)
+                plt.xlabel('Presynaptic Stimulus Count')
+                plt.ylabel('Average Membrane Potential (mV)')
+                plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = Low)')
+                
+                plt.sca(axs[2,1])
+                plt.hist2d(preSpikeCounts[signal==1], average_Vm[signal==1], bins=[bins_pre, bins_avVm], normed=True)
+                plt.xlabel('Presynaptic Stimulus Count')
+                plt.ylabel('Average Membrane Potential (mV)')
+                plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = High)')
+                
+            elif self.code_type is 'temp':
+                
+                fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height), nrows=1, ncols=2)
+                
+                plt.sca(axs[0])
+                plt.hist(postSpikeCounts[signal==0], bins=bins_post, alpha=0.5, density=True)
+                plt.hist(postSpikeCounts[signal==1], bins=bins_post, alpha=0.5, density=True)
+                plt.hist(postSpikeCounts[signal==0], bins=bins_post, histtype='step', lw=5, color='C0', density=True)
+                plt.hist(postSpikeCounts[signal==1], bins=bins_post, histtype='step', lw=5, color='C1', density=True)
+                
+                plt.xlabel('Post-Synaptic Spike Count')
+                plt.ylabel('Probability')
+                legend = plt.legend(['Low', 'High'])
+                plt.setp(legend.get_title(),fontsize=16)
+                
+                plt.sca(axs[1])
+                plt.hist(average_Vm[signal==0], bins=bins_avVm, alpha=0.5, density=True)
+                plt.hist(average_Vm[signal==1], bins=bins_avVm, alpha=0.5, density=True)
+                plt.hist(average_Vm[signal==0], bins=bins_avVm, histtype='step', lw=5, color='C0', density=True)
+                plt.hist(average_Vm[signal==1], bins=bins_avVm, histtype='step', lw=5, color='C1', density=True)
+                
+                plt.xlabel('Average Membrane Potential (mV)')
+                plt.ylabel('Probability')
+                legend = plt.legend(['Low', 'High'])
+                plt.setp(legend.get_title(),fontsize=16)
+            
+            fig.subplots_adjust(wspace=0.35, hspace=0.3)
+                
+            if savefig:
+                fig.savefig(self.celldir+'/%s_code_hists.svg'%self.code_type)
+                
+            if closefig:
+                fig.clf()
+                plt.close()
+                
     def plot(self, figsize=(12, 10), savefig=True, closefig=False):
         if self.data_exists:
             data = self.get_data()

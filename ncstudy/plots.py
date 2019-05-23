@@ -4,6 +4,7 @@ from itertools import combinations
 from scipy.cluster.hierarchy import dendrogram, linkage
 from pandas.plotting import scatter_matrix
 from sklearn.preprocessing import StandardScaler, Imputer
+from stats import *
 
 def add_inset_ax(ax,rect):
     
@@ -114,7 +115,7 @@ def plot_syn_delays(df_syn, kind='Mean', figsize=(10, 3)):
         plt.title(fl)
     return fig
 
-def plot_MI(df, title_string, num_comparisons, replace_mono_with_slopes=False, figsize=(3,4), tests=None):
+def plot_bar(df, num_comparisons=1, figsize=(3,4), tests=None):
     fluors = ['NF', 'PV+', 'SST+']
     colors = ['#F5A623', '#4A90E2', '#7ED321']
     width = 0.8
@@ -130,15 +131,14 @@ def plot_MI(df, title_string, num_comparisons, replace_mono_with_slopes=False, f
             color=colors)
 
     plt.xticks(range(len(fluors)), fluors)
+    
+    colname = [col for col in df.columns if col is not 'Fluorescence'][0]
 
     for fx, fl in enumerate(fluors):
-        vals = df[df['Fluorescence'] == fl]['MI']
+        vals = df[df['Fluorescence'] == fl][colname]
         locs = np.random.randn(len(vals))*spread + fx
         plt.plot(locs, vals, 'o', color=colors[fx])
-    plt.title(title_string)
     plt.xlabel('Cell Type')
-    plt.ylabel('%sMutual Information (bits)'%('Conditional\n' if 'Rate' in title_string else ''))
-
     if tests:
         test_string = test_to_string(tests, num_comparisons = num_comparisons )
         fig.set_size_inches((6,4))
@@ -149,7 +149,18 @@ def plot_MI(df, title_string, num_comparisons, replace_mono_with_slopes=False, f
         n_cells_string = ''.join(['%s n= %i\n'%(fl, nc) for fl, nc in zip(fluors, n_cells)])
         plt.text(s= n_cells_string + test_string, x= 0.0, y= 0.15, fontsize= 14)
         plt.axis('off')
-        
+    return fig
+
+def plot_MI(df, title_string, num_comparisons, figsize=(3,4), tests=None):
+    fig = plot_bar(df, num_comparisons=num_comparisons, figsize=(3,4), tests=tests)
+    plt.title(title_string)
+    plt.ylabel('%sMutual Information (bits)'%('Conditional\n' if 'Rate' in title_string else ''))
+    return fig
+
+def plot_cutoffs(df, figsize=(3,4), tests=None):
+    fig = plot_bar(df, figsize=(3,4), tests=tests)
+    plt.title('Early-Late Cutoff')
+    plt.ylabel('Time (ms)')
     return fig
 
 def test_to_string(test_dict, num_comparisons):
@@ -224,4 +235,48 @@ def plot_dendrogram(df, figsize=(25, 10)):
     
     return fig
 
+def pi_tick_labels(nticks = 7):
+    '''
+    Return ticks and tick labels in the bound of [0, 2 pi]
     
+    Arguments :
+        nticks (int) : number of ticks
+    
+    Returns :
+        ticks (np.array)   : tick locations
+        tick_labels (list) : list of strings containing tick labels
+    '''
+    
+    from fractions import Fraction
+    tick_labels = ['0']
+    for ix in range(1, nticks):
+        F = Fraction(2*ix, nticks-1)
+        num = F.numerator
+        den = F.denominator
+        tick_string = r'$\pi$'
+        if num > 1:
+            tick_string = r'%i'%num + tick_string
+        if den > 1:
+            tick_string = tick_string + r'/%i'%den
+        tick_labels.append(tick_string)
+        
+    ticks = np.linspace(0, 2*np.pi, nticks)
+    return ticks, tick_labels
+
+def plot_mixture_cutoff(X, M, lognormal=False, linspace=1000, cutoff=None, figsize=(6, 4)):
+    x = np.linspace(0.001, 2*np.pi, 1000)
+    if lognormal:
+        X = np.exp(X)
+        px = log_gaussian_mixture(x, M)
+    else:
+        px = gaussian_mixture(x, M)
+    
+    fig = plt.figure(figsize=figsize)
+    plt.hist(X, bins='auto', density=True)
+    plt.plot(x, px)
+    if cutoff:
+        plt.vlines(x=cutoff*np.pi/25, ymin=0, ymax=px.max(), color='C7')
+    plt.xlabel('Spike Phase')
+    plt.ylabel('Probability')
+    
+    return fig

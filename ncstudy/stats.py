@@ -119,11 +119,12 @@ def spikeMutualInformation(postSpikes, signal):
 
     return hr + hs - hrs                            # I(signal; post) = H(post) + H(signal) - H(post, signal)
 
-def MI_hypothesis_tests(df):
+def hypothesis_tests(df):
     
     fluors = list(df['Fluorescence'].unique())
     fluor_pairs = list(combinations(iterable=fluors, r=2))
-    grouped_data = [df.groupby('Fluorescence').get_group(fl)['MI'] for fl in fluors]
+    colname = [col for col in df.columns if col is not 'Fluorescence'][0]
+    grouped_data = [df.groupby('Fluorescence').get_group(fl)[colname] for fl in fluors]
     
     test_dict = {'Main' : {}, 'Pairs' : {}}
     
@@ -175,3 +176,49 @@ def ephys_pca(df_ephys):
     
 #-------------------------------------------------------------------
 #-------------------------------------------------------------------
+
+def spikeTimes_to_phase(spikeTimes, frequency):
+    '''
+    Convert spike times to phases with respect to a given frequency
+    
+    Arguments:
+        spike times (np.array) : array of spike times for a particular cell in a particular trial
+        frequency (float)      : desired frequency to obtain phases
+    
+    Returns:
+        phases (np.array)      : array of phases
+        
+    '''
+    dt = 1./frequency
+    phase = 2*np.pi*(spikeTimes%dt)/dt
+    return phase
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def gaussian(x, mu=0, sigma=1):
+    return np.exp(-0.5 * (x - mu)**2 * sigma**-2) * (2 * np.pi * sigma**2)**-0.5
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def gaussian_mixture(x, M):
+    px = np.zeros_like(x)
+    for k in range(M.n_components):
+        px += gaussian(x, mu=M.means_[k, 0], sigma=np.sqrt(M.covariances_[k,0,0])) * M.weights_[k]
+    return px
+
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+
+def log_gaussian(x, mu=0, sigma=1):
+    return np.exp(-0.5 * (np.log(x) - mu)**2 * sigma**-2) * (2 * np.pi * (sigma * x)**2) ** -0.5
+    
+#-------------------------------------------------------------------
+#-------------------------------------------------------------------
+    
+def log_gaussian_mixture(x, M):
+    px = np.zeros_like(x)
+    for k in range(M.n_components):
+        px += log_gaussian(x, mu=M.means_[k, 0], sigma=np.sqrt(M.covariances_[k,0,0])) * M.weights_[k]
+    return px
