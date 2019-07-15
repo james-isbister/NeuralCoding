@@ -280,3 +280,15 @@ def plot_mixture_cutoff(X, M, lognormal=False, linspace=1000, cutoff=None, figsi
     plt.ylabel('Probability')
     
     return fig
+
+def hist_modality(df, title, figsize=(6, 4)):
+    fig = plt.figure(figsize=figsize)
+    for fl, color in zip(['NF', 'PV+', 'SST+'], ['#F5A623', '#4A90E2', '#7ED321']):
+        modality = np.concatenate(df[df['Fluorescence'] == fl]['modality'])
+        plt.hist(modality, bins=np.arange(-0.5, 9.5), density=True, lw=4, histtype='step', color=color, label=fl)
+        plt.hist(modality, bins=np.arange(-0.5, 9.5), density=True, alpha=0.25, histtype='stepfilled', color=color)
+    plt.xlabel('# Modes')
+    plt.ylabel('Probability')
+    plt.title(title)
+    plt.legend()
+    return fig

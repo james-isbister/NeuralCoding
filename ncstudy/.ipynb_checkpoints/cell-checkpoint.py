@@ -10,8 +10,9 @@ from collections import OrderedDict
 from ephys import *
 from synapses import *
 from stats import *
+from silverman import silvermans_test_beta
 from .plots import add_inset_ax, plot_mixture_cutoff
-from .utils import load_episodic, resample, hcf
+from .utils import load_episodic, resample, hcf, filter_spikeTime_signalState
 
 from quantities import pF, MOhm, nA, mV, ms, Hz
 import matplotlib.pyplot as plt
@@ -68,11 +69,13 @@ class Cell(object):
         
         self.rate_code.estimate_mutual_information()
         if self.rate_code.data_exists:
+            self.rate_code.estimate_modality()
             self.rate_code.plot(closefig=True)
             self.rate_code.hist(closefig=True, savefig=True)
         
         self.temp_code.estimate_mutual_information()
         if self.temp_code.data_exists:
+            self.temp_code.estimate_modality()
             self.temp_code.plot(closefig=True)
             self.temp_code.hist(closefig=True)
             
@@ -123,6 +126,8 @@ class Cell(object):
                     fig = plot_mixture_cutoff(X, M2, lognormal=fit_lognormal, cutoff=cutoff)
                     plt.title('%s %s'%(self.fluor, self.cellid))
                     fig.savefig(self.celldir+'/mixture_cutoff.svg')
+                    fig.clf()
+                    plt.close()
 
                 return cutoff
             else:
@@ -130,10 +135,11 @@ class Cell(object):
                     fig = plot_mixture_cutoff(X, M1, lognormal=fit_lognormal)
                     plt.title('%s %s'%(self.fluor, self.cellid))
                     fig.savefig(self.celldir+'/mixture_cutoff.svg')
+                    fig.clf()
+                    plt.close()
                 return np.nan
 
         return np.nan
-        
 #-----------------------------------------------------------------------------------------------------
 #-----------------------------------------------------------------------------------------------------
     
@@ -160,6 +166,7 @@ class CellCollection(OrderedDict):
         self.collect_ephys()
         self.collect_syns()
         self.collect_MI()
+        self.collect_modality()
                 
     def collect_metadata(self):
         self.metadata = {'Fluorescence':[],'Layer':[]}
@@ -217,8 +224,33 @@ class CellCollection(OrderedDict):
                         self.MI['Temporal'][key_a].append(celln.temp_code.results[key_a])
                     elif type(item_a) is dict:
                         for key_b, item_b in self.MI['Temporal'][key_a].items():
-                            self.MI['Temporal'][key_a][key_b].append(celln.temp_code.results[key_a][key_b]) 
-
+                            self.MI['Temporal'][key_a][key_b].append(celln.temp_code.results[key_a][key_b])
+                            
+    def collect_modality(self):
+        self.modality = {'Rate'     : {'early' : {'all' : [], 'low' : [], 'high' : []},
+                                       'late'  : {'all' : [], 'low' : [], 'high' : []},
+                                       'mono'  : {'all' : [], 'low' : [], 'high' : []},
+                                       'poly'  : {'all' : [], 'low' : [], 'high' : []}},
+                         'Temporal' : {'early' : {'all' : [], 'low' : [], 'high' : []},
+                                       'late'  : {'all' : [], 'low' : [], 'high' : []},
+                                       'mono'  : {'all' : [], 'low' : [], 'high' : []},
+                                       'poly'  : {'all' : [], 'low' : [], 'high' : []}}}
+        
+        for cellid, celln in self.items():
+            for win in self.modality['Rate'].keys():
+                for state in self.modality['Rate'][win].keys():
+                    if celln.rate_code.data_exists:
+                        self.modality['Rate'][win][state].append([celln.rate_code.silverman[win][state][ix]['modality'] for ix in celln.rate_code.silverman[win][state].keys()])
+                    else:
+                        self.modality['Rate'][win][state].append([])
+                        
+            for win in self.modality['Temporal'].keys():
+                for state in self.modality['Temporal'][win].keys():
+                    if celln.temp_code.data_exists:
+                        self.modality['Temporal'][win][state].append([celln.temp_code.silverman[win][state][ix]['modality'] for ix in celln.temp_code.silverman[win][state].keys()])
+                    else:
+                        self.modality['Temporal'][win][state].append([])
+                
 class Synapses(Cell):
     def __init__(self, celldir, mono_winsize, total_winsize, sampling_frequency):
         super(Synapses, self).__init__(celldir)
@@ -579,7 +611,6 @@ class Code(Cell):
                                                        values=binned_vm,
                                                        statistic=np.nanmean, bins=bins_all)[0]
 
-
             threshCrosses = findThreshCross(data)
             self.spikeTimes['mono']  = [spT[spT % stim_winsize_secs <  (mono_winsize_secs + delay_secs)] for spT in self.spikeTimes['all']]
             self.spikeTimes['poly']  = [spT[spT % stim_winsize_secs >= (mono_winsize_secs + delay_secs)] for spT in self.spikeTimes['all']]
@@ -633,6 +664,43 @@ class Code(Cell):
                             'Average Vm' : {'mono' : np.nan, 'poly' : np.nan, 'all' : np.nan},
                             'Initial Slope' : np.nan}
             
+    def estimate_modality(self, test_max_modes= 10, maxp= 0.9):
+        if self.data_exists:
+            self.silverman = {'early' : {'all' : {}, 'low' : {}, 'high' : {}},
+                              'late'  : {'all' : {}, 'low' : {}, 'high' : {}},
+                              'mono' : {'all' : {}, 'low' : {}, 'high' : {}},
+                              'poly'  : {'all' : {}, 'low' : {}, 'high' : {}}}
+            
+            for win in self.silverman.keys():
+                for state in self.silverman[win].keys():
+                    for ix, spikeTimes in enumerate(self.spikeTimes[win]):
+                        if state is not 'all':
+                            signal_state = 1 if state is 'high' else 0 if state is 'low' else None
+                            spikeTimes = np.array(filter(lambda s : filter_spikeTime_signalState(s, self.time, self.signal.astype('int'), signal_state), spikeTimes))
+                        
+                        self.silverman[win][state][ix] = {}
+                        phases = spikeTimes_to_phase(spikeTimes, frequency=20)
+                        
+                        if len(phases) == 0:
+                            self.silverman[win][state][ix]['modality'] = 0
+                            self.silverman[win][state][ix]['p'] = []
+                        elif len(phases) == 1:
+                            self.silverman[win][state][ix]['modality'] = 1
+                            self.silverman[win][state][ix]['p'] = [np.nan]
+
+                        else:
+                            self.silverman[win][state][ix]['p'] = []
+                            for num_modes in range(1, test_max_modes+1):
+                                p = silvermans_test_beta(phases, target_modes=num_modes, tol=1e-4, p_significant = 0.9, significance_credibility=0.995, max_num_bootstraps=2000)
+                                self.silverman[win][state][ix]['p'].append(p)
+                                if p < maxp:
+                                    self.silverman[win][state][ix]['modality'] = num_modes
+                                    break
+
+                            if not any([p < maxp for p in self.silverman[win][state][ix]['p']]):
+                                self.silverman[win][state][ix]['modality'] = 1
+        else:
+            self.silverman = {'early' : None, 'late' : None}
                 
     def extract_slopes(self):
         if self.data_exists:

@@ -33,14 +33,15 @@ class Analysis(object):
         for cell_id in self.cell_ids:
             self.cells.add(cell.Cell('%s/%s'%(self.data_path,cell_id)))
 
-    def load(self, redo_ephys=False, redo_syns=False, redo_MI=False):
+    def load(self, redo_ephys=False, redo_syns=False, redo_MI=False, redo_modality=False):
         tqdm.tqdm.write('Loading...')
 
         self.incomplete = {'ephys' : [],
                            'syns' : [],
-                           'MI' : []}
-        
-        
+                           'MI' : [],
+                           'modality' : []}
+
+
         for cellid in tqdm.tqdm(self.cells.keys()):
             celln = self.cells[cellid]
             if os.path.exists(celln.celldir + '/ephys.yaml') and not redo_ephys:
@@ -71,7 +72,7 @@ class Analysis(object):
                 celln.ephys.taum             = celln.ephys.results['Membrane Time Constant'].item()
             else:
                 self.incomplete['ephys'].append(cellid)
-                
+
             if os.path.exists(celln.celldir + '/syns.yaml') and not redo_syns:
                 state = yaml.load(open(celln.celldir+'/syns.yaml', 'r'))
                 celln.syns = cell.Synapses(celldir=celln.celldir,
@@ -84,10 +85,10 @@ class Analysis(object):
                 celln.syns.max_delay   = state['Results']['Max Delay']
             else:
                 self.incomplete['syns'].append(cellid)
-                
+
             if os.path.exists(celln.celldir + '/MI.yaml') and not redo_MI:
                 state = yaml.load(open(celln.celldir+'/MI.yaml', 'r'))
-                
+
                 celln.cutoff = state['Results']['cutoff']
                 celln.rate_code = cell.Code(celldir= celln.celldir, code_type='rate', delay=celln.syns.max_delay,
                                             mono_winsize       = state['Params']['Rate']['mono_winsize'],
@@ -95,27 +96,36 @@ class Analysis(object):
                                             start              = state['Params']['Rate']['start'],
                                             dur                = state['Params']['Rate']['dur'],
                                             sampling_frequency = state['Params']['Rate']['sampling_frequency'])
-                
+
                 celln.rate_code.early_winsize  = state['Params']['Rate']['early_winsize']
                 celln.rate_code.results        = state['Results']['Rate']
-                
+
                 if celln.rate_code.data_exists:                
                     celln.rate_code.spikeTimes = state['SpikeTimes']['Rate']
-                
+
                 celln.temp_code = cell.Code(celldir= celln.celldir, code_type='temp', delay=celln.syns.max_delay,
                                             mono_winsize       = state['Params']['Temporal']['mono_winsize'],
                                             stim_winsize       = state['Params']['Temporal']['stim_winsize'],
                                             start              = state['Params']['Temporal']['start'],
                                             dur                = state['Params']['Temporal']['dur'],
                                             sampling_frequency = state['Params']['Temporal']['sampling_frequency'])
-                
+
                 celln.temp_code.early_winsize  = state['Params']['Temporal']['early_winsize']
                 celln.temp_code.results = state['Results']['Temporal']
-                
+
                 if celln.temp_code.data_exists:
                     celln.temp_code.spikeTimes = state['SpikeTimes']['Temporal']
             else:
                 self.incomplete['MI'].append(cellid)
+
+            if os.path.exists(celln.celldir + '/modality.yaml') and not redo_modality:
+                state = yaml.load(open(celln.celldir+'/modality.yaml', 'r'))
+
+                celln.rate_code.silverman = state['Rate']
+                celln.temp_code.silverman = state['Temporal']
+
+            else:
+                self.incomplete['modality'].append(cellid)
 
         
     def save(self):
@@ -165,6 +175,9 @@ class Analysis(object):
             if celln.temp_code.data_exists:
                 MI_state['SpikeTimes']['Temporal'] = celln.temp_code.spikeTimes
             yaml.dump(MI_state, open(celln.celldir + '/MI.yaml', 'w'))
+            
+            modality_state = {'Rate' : celln.rate_code.silverman, 'Temporal' : celln.temp_code.silverman}
+            yaml.dump(modality_state, open(celln.celldir + '/modality.yaml', 'w'))
         
     def update(self):
         tqdm.tqdm.write('Updating...')
@@ -197,12 +210,17 @@ class Analysis(object):
             if cellid in self.incomplete['MI']:
                 celln.estimate_MI()
                 
-        self.incomplete = {'ephys' : [],
-                           'syns'  : [],
-                           'MI'    : []}
+            if cellid in self.incomplete['modality']:
+                celln.rate_code.estimate_modality()
+                celln.temp_code.estimate_modality()
+                
+        self.incomplete = {'ephys'    : [],
+                           'syns'     : [],
+                           'MI'       : [],
+                           'modality' : []}
         
-    def run(self, redo_ephys=False, redo_syns=False, redo_MI=False, reliability_threshold=0.9, replace_mono_with_slopes=False, fig_dir='./'):
-        self.load(redo_ephys=redo_ephys, redo_syns=redo_syns, redo_MI=redo_MI)
+    def run(self, redo_ephys=False, redo_syns=False, redo_MI=False, redo_modality=False, reliability_threshold=0.9, replace_mono_with_slopes=False, fig_dir='./'):
+        self.load(redo_ephys=redo_ephys, redo_syns=redo_syns, redo_MI=redo_MI, redo_modality=redo_modality)
         self.update()
         self.cells.collect_results()
         
@@ -298,6 +316,20 @@ class Analysis(object):
         self.results['cutoff']['tests'] = hypothesis_tests(df_cutoff)
         self.results['cutoff']['fig'] = plots.plot_cutoffs(df_cutoff, tests=self.results['cutoff']['tests'])
         self.results['cutoff']['fig'].savefig(fig_dir + '/cutoff.svg')
+        
+        self.results['modality'] = {}
+        for code in self.cells.modality.keys():
+            self.results['modality'][code] = {}
+            for win in self.cells.modality[code].keys():
+                self.results['modality'][code][win] = {}
+                for state in self.cells.modality[code][win].keys():
+                    self.results['modality'][code][win][state] = {}
+                    df_modality = df
+                    df_modality['modality'] = self.cells.modality[code][win][state]
+                    df_modality = df_modality[['Fluorescence', 'modality']][criteria]
+                    self.results['modality'][code][win][state]['df'] = df_modality
+                    self.results['modality'][code][win][state]['fig'] = plots.hist_modality(df_modality, title='%s-%s-%s'%(win, code, state))
+                    self.results['modality'][code][win][state]['fig'].savefig(fig_dir + '/%s_%s_%s_modality.svg'%(win, code, state))
 
         self.fig_ephys.savefig(fig_dir+'/ephys_features.svg')
         self.fig_scatter.savefig(fig_dir+'/ephys_scatter.svg')

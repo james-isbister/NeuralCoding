@@ -107,3 +107,20 @@ def highestCommonFactor(x, y):
 
 def hcf(x,y):
     return highestCommonFactor(x, y)
+
+def filter_spikeTime_signalState(spikeTime, time, signal, state):
+    '''
+    Filter spike time that occur during a chosen signal state.
+    
+    Arguments:
+    
+        spikeTime (float) : post-synaptic spike time
+        time (np.array)   : array of time bins
+        signal (np.array) : signal states over time
+        state  (int)      : chosen state of signal
+    
+    Returns:
+        spikeTime_in_state (bool) : boolean to signal whether spikeTime occurred during a given signal state.
+    '''
+    
+    return signal[spikeTime>=time][-1] == state
