@@ -1,4 +1,4 @@
-# Analysis code for Prince et al (under review) ['Neocortical inhibitory interneuron subtypes display distinct responses to synchrony and rate of inputs'](https://www.biorxiv.org/content/10.1101/671248v3)
+# Analysis code for Prince et al (under review) ['Neocortical inhibitory interneuron subtypes are differentially attuned to the synchrony and rate of information'](https://www.biorxiv.org/content/10.1101/671248v3)
 
 Note: if you are unable to open Neural_Coding.ipynb in your browser, try opening in [Google Colab](https://colab.research.google.com/github/lyprince/NeuralCoding/blob/master/Neural_Coding.ipynb)
 
