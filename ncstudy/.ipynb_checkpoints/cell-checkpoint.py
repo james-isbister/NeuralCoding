@@ -7,10 +7,10 @@ import os
 import sys
 from collections import OrderedDict
 
-from ephys import *
-from synapses import *
-from stats import *
-from silverman import silvermans_test_beta
+from .ephys import *
+from .synapses import *
+from .stats import *
+from .silverman import silvermans_test_beta
 from .plots import add_inset_ax, plot_mixture_cutoff
 from .utils import load_episodic, resample, hcf, filter_spikeTime_signalState
 
@@ -47,6 +47,8 @@ class Cell(object):
         self.syns = Synapses(celldir = self.celldir,
                              mono_winsize = mono_winsize, total_winsize=total_winsize,
                              sampling_frequency = sampling_frequency)
+        
+        # JI COMMENTED OUT
         self.syns.extract_features()
         if not os.path.exists(self.celldir+'/syn_features.svg'):
             self.syns.plot(closefig=True)
@@ -151,7 +153,7 @@ class CellCollection(OrderedDict):
     def __getitem__(self, key):
         
         if type(key) is int:
-            key = OrderedDict.keys()[key]
+            key = list(OrderedDict.keys())[key]
             
         return OrderedDict.__getitem__(self, key)
     
@@ -171,7 +173,7 @@ class CellCollection(OrderedDict):
     def collect_metadata(self):
         self.metadata = {'Fluorescence':[],'Layer':[]}
         
-        for cellid, celln in self.items():
+        for cellid, celln in list(self.items()):
             self.metadata['Fluorescence'].append(celln.fluor)
             self.metadata['Layer'].append(celln.layer)
                 
@@ -182,9 +184,9 @@ class CellCollection(OrderedDict):
                       'Spike Threshold (mV)':[],'Spike Amplitude (mV)':[],
                       'Spike Halfwidth (ms)':[],'Membrane Time Constant (ms)':[]}
         
-        for cellid, celln in self.items():
+        for cellid, celln in list(self.items()):
             if hasattr(celln, 'ephys'):
-                for key, val in celln.ephys.results.items():
+                for key, val in list(celln.ephys.results.items()):
                     try:
                         self.ephys[key+' (%s)'%(str(val.units).split(' ')[1])].append(val.item())
                     except AttributeError:
@@ -192,7 +194,7 @@ class CellCollection(OrderedDict):
                         
     def collect_syns(self):
         self.syns = {'Reliability' : [], 'Mean Delay' : [], 'Max Delay' : []}
-        for cellid, celln in self.items():
+        for cellid, celln in list(self.items()):
             if hasattr(celln, 'syns'):
                 self.syns['Reliability'].append(celln.syns.reliability)
                 self.syns['Mean Delay'].append(celln.syns.mean_delay)
@@ -207,23 +209,23 @@ class CellCollection(OrderedDict):
                              'Initial Slope' : []},
                    'cutoff' : [] }
         
-        for cellid, celln in self.items():
+        for cellid, celln in list(self.items()):
             self.MI['cutoff'].append(celln.cutoff)
             
             if hasattr(celln, 'rate_code'):
-                for key_a, item_a in self.MI['Rate'].items():
+                for key_a, item_a in list(self.MI['Rate'].items()):
                     if type(item_a) is list:
                         self.MI['Rate'][key_a].append(celln.rate_code.results[key_a])
                     elif type(item_a) is dict:
-                        for key_b, item_b in self.MI['Rate'][key_a].items():
+                        for key_b, item_b in list(self.MI['Rate'][key_a].items()):
                             self.MI['Rate'][key_a][key_b].append(celln.rate_code.results[key_a][key_b]) 
                                 
             if hasattr(celln, 'temp_code'):
-                for key_a, item_a in self.MI['Temporal'].items():
+                for key_a, item_a in list(self.MI['Temporal'].items()):
                     if type(item_a) is list:
                         self.MI['Temporal'][key_a].append(celln.temp_code.results[key_a])
                     elif type(item_a) is dict:
-                        for key_b, item_b in self.MI['Temporal'][key_a].items():
+                        for key_b, item_b in list(self.MI['Temporal'][key_a].items()):
                             self.MI['Temporal'][key_a][key_b].append(celln.temp_code.results[key_a][key_b])
                             
     def collect_modality(self):
@@ -236,18 +238,18 @@ class CellCollection(OrderedDict):
                                        'mono'  : {'all' : [], 'low' : [], 'high' : []},
                                        'poly'  : {'all' : [], 'low' : [], 'high' : []}}}
         
-        for cellid, celln in self.items():
-            for win in self.modality['Rate'].keys():
-                for state in self.modality['Rate'][win].keys():
+        for cellid, celln in list(self.items()):
+            for win in list(self.modality['Rate'].keys()):
+                for state in list(self.modality['Rate'][win].keys()):
                     if celln.rate_code.data_exists:
-                        self.modality['Rate'][win][state].append([celln.rate_code.silverman[win][state][ix]['modality'] for ix in celln.rate_code.silverman[win][state].keys()])
+                        self.modality['Rate'][win][state].append([celln.rate_code.silverman[win][state][ix]['modality'] for ix in list(celln.rate_code.silverman[win][state].keys())])
                     else:
                         self.modality['Rate'][win][state].append([])
                         
-            for win in self.modality['Temporal'].keys():
-                for state in self.modality['Temporal'][win].keys():
+            for win in list(self.modality['Temporal'].keys()):
+                for state in list(self.modality['Temporal'][win].keys()):
                     if celln.temp_code.data_exists:
-                        self.modality['Temporal'][win][state].append([celln.temp_code.silverman[win][state][ix]['modality'] for ix in celln.temp_code.silverman[win][state].keys()])
+                        self.modality['Temporal'][win][state].append([celln.temp_code.silverman[win][state][ix]['modality'] for ix in list(celln.temp_code.silverman[win][state].keys())])
                     else:
                         self.modality['Temporal'][win][state].append([])
                 
@@ -262,7 +264,16 @@ class Synapses(Cell):
         self.sampling_frequency = sampling_frequency # kHz
         self.time = np.arange(self.total_winsteps, dtype=float)/self.sampling_frequency
         
-        self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
+
+#         self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
+        # JI - Instead of above line
+        print(self.celldir+'/presyn_ids.csv')
+        with open(self.celldir+'/presyn_ids.csv', 'rb') as f: 
+            lines = f.readlines()
+#             print(lines)
+            self.presyn_ids = np.loadtxt(lines[1:], dtype=int)
+            print(self.presyn_ids)
+            
         self.synapses = dict([(ix, {'id' : self.presyn_ids[ix]}) for ix in range(10)])
 
     def get_data(self):
@@ -275,7 +286,7 @@ class Synapses(Cell):
         Vm, pulse = self.get_data()
         self.pulse_on = np.arange(1, len(pulse))[np.logical_and(pulse[1:, 0]>0.1, pulse[:-1, 0]<=0.1)]
         
-        for synapse_id, synapse in self.synapses.items():
+        for synapse_id, synapse in list(self.synapses.items()):
             synapse['data']     = np.array([Vm[p:p+self.total_winsteps, synapse_id].T for p in self.pulse_on])
             synapse['pEarlyAP'] = 0.0
             synapse['pMono']    = 0.0
@@ -321,7 +332,7 @@ class Synapses(Cell):
     def plot(self, figsize=(12, 4.5), savefig=True, closefig=False):
         fig,axs = plt.subplots(nrows=2,ncols=5,sharex=True,sharey=True,figsize=figsize)
         axs = np.ravel(axs)
-        for synapse_id, synapse in self.synapses.items():
+        for synapse_id, synapse in list(self.synapses.items()):
             plt.sca(axs[synapse_id])
             plt.plot(self.time, synapse['data'].T, lw=1, alpha=0.5, color='C0')
             plt.title('Input #%i'%(synapse['id']+1))
@@ -505,7 +516,7 @@ class Electrophysiology(Cell):
         if include_results:
             plt.sca(axs[-1])
             plt.axis('off')
-            Y = np.linspace(0.05,0.9,len(self.results.keys()))
+            Y = np.linspace(0.05,0.9,len(list(self.results.keys())))
             for ix,key in enumerate(self.results.keys()):
                 plt.text(x = 0.1,y = Y[ix],s = key+' = ' + str(np.round(self.results[key], 2)),
                          transform=axs[-1].axes.transAxes, fontsize=14)
@@ -522,6 +533,9 @@ class Electrophysiology(Cell):
 
 class Code(Cell):
     def __init__(self, celldir, code_type, delay, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+        
+        print(celldir)
+        
         super(Code, self).__init__(celldir)
         assert code_type == 'rate' or code_type == 'temp', 'code_type \'%s\' not recognised'%code_type
         
@@ -548,6 +562,8 @@ class Code(Cell):
         self.time               = np.arange(0, self.dur, self.stim_winsize/1000.)
         self.time_trace         = np.arange(self.exp_dur, dtype=float)/(self.sampling_frequency*1000)
         
+        # JI WHERE THE MISSING DATA IS USED
+        
         self.stimulus           = np.loadtxt('./stimulus/%scode.csv'%self.code_type, delimiter=',', skiprows=1)[:, 1:]/50
         
         sigBins,signal          = np.loadtxt('./stimulus/stim_signal.csv', delimiter= ',')
@@ -556,6 +572,7 @@ class Code(Cell):
                                            nf= 1000/self.stim_winsize)
 
         self.data_exists        = os.path.exists('./%s/%s.abf'%(self.celldir, self.file_type))
+        print(self.data_exists)
         
         self.get_spikeTimes()
             
@@ -620,7 +637,7 @@ class Code(Cell):
             
             self.spikeCounts = {}
 
-            for key, times in self.spikeTimes.items():
+            for key, times in list(self.spikeTimes.items()):
                 self.spikeCounts[key] = [np.histogram(times_i, bins_all)[0] for times_i in times]
 
 
@@ -634,12 +651,12 @@ class Code(Cell):
                                                                              c = preSpikes[self.slopes.nonzero()])
 
                 # Spikes
-                for key, postSpikes in self.spikeCounts.items():
+                for key, postSpikes in list(self.spikeCounts.items()):
                     self.results['Spikes'][key] = spikeConditionalMutualInformation(postSpikes=postSpikes,
                                                                                     signal=self.signal,
                                                                                     preSpikes=preSpikes)
 
-                for key, Vm in self.average_Vm.items():
+                for key, Vm in list(self.average_Vm.items()):
                     self.results['Average Vm'][key] = conditionalMutualInformation(s = np.tile(self.signal, Vm.shape[0]),
                                                                                    r = np.ravel(Vm),
                                                                                    c = np.tile(preSpikes, Vm.shape[0]))
@@ -652,11 +669,11 @@ class Code(Cell):
                                                                   r = self.slopes[self.slopes.nonzero()])
 
                 # Spikes
-                for key, postSpikes in self.spikeCounts.items():
+                for key, postSpikes in list(self.spikeCounts.items()):
                     self.results['Spikes'][key] = spikeMutualInformation(postSpikes=postSpikes,
                                                                          signal=self.signal)
 
-                for key, Vm in self.average_Vm.items():
+                for key, Vm in list(self.average_Vm.items()):
                     self.results['Average Vm'][key] = mutualInformation(s = np.tile(self.signal, Vm.shape[0]),
                                                                         r = np.ravel(Vm))
         else:
@@ -671,12 +688,12 @@ class Code(Cell):
                               'mono' : {'all' : {}, 'low' : {}, 'high' : {}},
                               'poly'  : {'all' : {}, 'low' : {}, 'high' : {}}}
             
-            for win in self.silverman.keys():
-                for state in self.silverman[win].keys():
+            for win in list(self.silverman.keys()):
+                for state in list(self.silverman[win].keys()):
                     for ix, spikeTimes in enumerate(self.spikeTimes[win]):
-                        if state is not 'all':
-                            signal_state = 1 if state is 'high' else 0 if state is 'low' else None
-                            spikeTimes = np.array(filter(lambda s : filter_spikeTime_signalState(s, self.time, self.signal.astype('int'), signal_state), spikeTimes))
+                        if state != 'all':
+                            signal_state = 1 if state == 'high' else 0 if state == 'low' else None
+                            spikeTimes = np.array([s for s in spikeTimes if filter_spikeTime_signalState(s, self.time, self.signal.astype('int'), signal_state)])
                         
                         self.silverman[win][state][ix] = {}
                         phases = spikeTimes_to_phase(spikeTimes, frequency=20)
@@ -744,7 +761,7 @@ class Code(Cell):
             
             fig_width, fig_height= figsize
             
-            if self.code_type is 'rate':
+            if self.code_type == 'rate':
                 
                 fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height * 3), nrows=3, ncols=2)
                 
@@ -793,7 +810,7 @@ class Code(Cell):
                 plt.ylabel('Average Membrane Potential (mV)')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = High)')
                 
-            elif self.code_type is 'temp':
+            elif self.code_type == 'temp':
                 
                 fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height), nrows=1, ncols=2)
                 

@@ -3,7 +3,8 @@ import numpy as np
 from itertools import combinations
 from scipy.cluster.hierarchy import dendrogram, linkage
 from pandas.plotting import scatter_matrix
-from sklearn.preprocessing import StandardScaler, Imputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 from .stats import *
 
 def add_inset_ax(ax,rect):
@@ -132,7 +133,7 @@ def plot_bar(df, num_comparisons=1, figsize=(3,4), tests=None):
 
     plt.xticks(list(range(len(fluors))), fluors)
     
-    colname = [col for col in df.columns if col is not 'Fluorescence'][0]
+    colname = [col for col in df.columns if col != 'Fluorescence'][0]
 
     for fx, fl in enumerate(fluors):
         vals = df[df['Fluorescence'] == fl][colname]
@@ -206,7 +207,7 @@ def plot_pca(df, figsize=(15, 5)):
 def plot_dendrogram(df, figsize=(25, 10)):
     
     x = df.select_dtypes(np.number).as_matrix()
-    imp = Imputer(strategy="mean", axis=0)
+    imp = SimpleImputer(strategy="mean", axis=0)
     scale = StandardScaler()
     x = scale.fit_transform(imp.fit_transform(x))
 

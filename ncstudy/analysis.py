@@ -187,7 +187,7 @@ class Analysis(object):
                 celln.extract_ephys(pulse_on = 266, pulse_len = 500, sampling_frequency = 10.,
                                     I_min = -0.08, I_max = 0.4, I_step = 0.04)
             if cellid in self.incomplete['syns']:
-                df = pd.read_csv('./data/stimcellids.csv', index_col=0, header=None)
+                df = pd.read_csv(self.data_path + '/stimcellids.csv', index_col=0, header=None)
                 df = df.loc[celln.cellid] - 1
                 df.to_csv(celln.celldir+'/presyn_ids.csv', index=False)
                 

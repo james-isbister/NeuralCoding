@@ -6,7 +6,8 @@ import numpy as np
 import scipy.stats as stats
 import pandas as pd
 from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler, Imputer
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
 
 from itertools import combinations
 
@@ -123,7 +124,7 @@ def hypothesis_tests(df):
     
     fluors = list(df['Fluorescence'].unique())
     fluor_pairs = list(combinations(iterable=fluors, r=2))
-    colname = [col for col in df.columns if col is not 'Fluorescence'][0]
+    colname = [col for col in df.columns if col != 'Fluorescence'][0]
     grouped_data = [df.groupby('Fluorescence').get_group(fl)[colname] for fl in fluors]
     
     test_dict = {'Main' : {}, 'Pairs' : {}}
@@ -161,8 +162,8 @@ def ephys_pca(df_ephys):
     x = df_ephys.loc[:,features].values
     y = df_ephys.loc[:,['Fluorescence']].values
 
-    #standardize data, used Imputer to handle NaN entries
-    imp = Imputer(strategy="mean", axis=0)
+    #standardize data, used SimpleImputer to handle NaN entries
+    imp = SimpleImputer(strategy="mean", axis=0)
     scale = StandardScaler()
     x = scale.fit_transform(imp.fit_transform(x))
     

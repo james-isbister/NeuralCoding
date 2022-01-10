@@ -47,6 +47,8 @@ class Cell(object):
         self.syns = Synapses(celldir = self.celldir,
                              mono_winsize = mono_winsize, total_winsize=total_winsize,
                              sampling_frequency = sampling_frequency)
+        
+        # JI COMMENTED OUT
         self.syns.extract_features()
         if not os.path.exists(self.celldir+'/syn_features.svg'):
             self.syns.plot(closefig=True)
@@ -262,7 +264,16 @@ class Synapses(Cell):
         self.sampling_frequency = sampling_frequency # kHz
         self.time = np.arange(self.total_winsteps, dtype=float)/self.sampling_frequency
         
-        self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
+
+#         self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
+        # JI - Instead of above line
+        print(self.celldir+'/presyn_ids.csv')
+        with open(self.celldir+'/presyn_ids.csv', 'rb') as f: 
+            lines = f.readlines()
+#             print(lines)
+            self.presyn_ids = np.loadtxt(lines[1:], dtype=int)
+            print(self.presyn_ids)
+            
         self.synapses = dict([(ix, {'id' : self.presyn_ids[ix]}) for ix in range(10)])
 
     def get_data(self):
@@ -522,6 +533,9 @@ class Electrophysiology(Cell):
 
 class Code(Cell):
     def __init__(self, celldir, code_type, delay, stim_winsize, mono_winsize, start, dur, sampling_frequency):
+        
+        print(celldir)
+        
         super(Code, self).__init__(celldir)
         assert code_type == 'rate' or code_type == 'temp', 'code_type \'%s\' not recognised'%code_type
         
@@ -548,6 +562,8 @@ class Code(Cell):
         self.time               = np.arange(0, self.dur, self.stim_winsize/1000.)
         self.time_trace         = np.arange(self.exp_dur, dtype=float)/(self.sampling_frequency*1000)
         
+        # JI WHERE THE MISSING DATA IS USED
+        
         self.stimulus           = np.loadtxt('./stimulus/%scode.csv'%self.code_type, delimiter=',', skiprows=1)[:, 1:]/50
         
         sigBins,signal          = np.loadtxt('./stimulus/stim_signal.csv', delimiter= ',')
@@ -556,6 +572,7 @@ class Code(Cell):
                                            nf= 1000/self.stim_winsize)
 
         self.data_exists        = os.path.exists('./%s/%s.abf'%(self.celldir, self.file_type))
+        print(self.data_exists)
         
         self.get_spikeTimes()
             
@@ -674,8 +691,8 @@ class Code(Cell):
             for win in list(self.silverman.keys()):
                 for state in list(self.silverman[win].keys()):
                     for ix, spikeTimes in enumerate(self.spikeTimes[win]):
-                        if state is not 'all':
-                            signal_state = 1 if state is 'high' else 0 if state is 'low' else None
+                        if state != 'all':
+                            signal_state = 1 if state == 'high' else 0 if state == 'low' else None
                             spikeTimes = np.array([s for s in spikeTimes if filter_spikeTime_signalState(s, self.time, self.signal.astype('int'), signal_state)])
                         
                         self.silverman[win][state][ix] = {}
@@ -744,7 +761,7 @@ class Code(Cell):
             
             fig_width, fig_height= figsize
             
-            if self.code_type is 'rate':
+            if self.code_type == 'rate':
                 
                 fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height * 3), nrows=3, ncols=2)
                 
@@ -793,7 +810,7 @@ class Code(Cell):
                 plt.ylabel('Average Membrane Potential (mV)')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = High)')
                 
-            elif self.code_type is 'temp':
+            elif self.code_type == 'temp':
                 
                 fig, axs = plt.subplots(figsize=(fig_width * 2, fig_height), nrows=1, ncols=2)
                 
