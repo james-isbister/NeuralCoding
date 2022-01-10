@@ -12,9 +12,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import cell
-import ephys
-import plots
+from . import cell
+from . import ephys
+from . import plots
 from .utils import load_episodic, convert_quantity, merge_dicts
 from .stats import hypothesis_tests, ephys_pca
 
@@ -42,7 +42,7 @@ class Analysis(object):
                            'modality' : []}
 
 
-        for cellid in tqdm.tqdm(self.cells.keys()):
+        for cellid in tqdm.tqdm(list(self.cells.keys())):
             celln = self.cells[cellid]
             if os.path.exists(celln.celldir + '/ephys.yaml') and not redo_ephys:
                 state = yaml.load(open(celln.celldir + '/ephys.yaml', 'r'))
@@ -53,7 +53,7 @@ class Analysis(object):
                                                      I_min    = state['Experiment']['I_min'],
                                                      I_max    = state['Experiment']['I_max'],
                                                      I_step   = state['Experiment']['I_step'])
-                celln.ephys.results = dict([(key, convert_quantity(val)) for key, val in state['Results'].items()])
+                celln.ephys.results = dict([(key, convert_quantity(val)) for key, val in list(state['Results'].items())])
                 celln.ephys.spikeFreq = np.array(state['SpikeFreq'])
 
                 celln.ephys.total_time = len(celln.ephys.get_data())/celln.ephys.sampling_frequency
@@ -130,9 +130,9 @@ class Analysis(object):
         
     def save(self):
         tqdm.tqdm.write('Saving...')
-        for cellid in tqdm.tqdm(self.cells.keys()):
+        for cellid in tqdm.tqdm(list(self.cells.keys())):
             celln = self.cells[cellid]
-            ephys_state = {'Results' : dict([(key, convert_quantity(val)) for key, val in celln.ephys.results.items()]),
+            ephys_state = {'Results' : dict([(key, convert_quantity(val)) for key, val in list(celln.ephys.results.items())]),
                            'Experiment' : {'I_min'     : celln.ephys.I_min,
                                            'I_max'     : celln.ephys.I_max,
                                            'I_step'    : celln.ephys.I_step,
@@ -181,7 +181,7 @@ class Analysis(object):
         
     def update(self):
         tqdm.tqdm.write('Updating...')
-        for cellid in tqdm.tqdm(self.cells.keys()):
+        for cellid in tqdm.tqdm(list(self.cells.keys())):
             celln = self.cells[cellid]
             if cellid in self.incomplete['ephys']:
                 celln.extract_ephys(pulse_on = 266, pulse_len = 500, sampling_frequency = 10.,
@@ -198,10 +198,10 @@ class Analysis(object):
                                     start=5, dur=50, sampling_frequency=10, delay=celln.syns.max_delay)
                 
                 
-        for cellid in tqdm.tqdm(self.cells.keys()):
+        for cellid in tqdm.tqdm(list(self.cells.keys())):
             celln = self.cells[cellid]
             if np.isnan(celln.cutoff):
-                mean_cutoff = np.nanmean([self.cells[idx].cutoff for idx in self.cells.keys() if self.cells[idx].fluor == celln.fluor])
+                mean_cutoff = np.nanmean([self.cells[idx].cutoff for idx in list(self.cells.keys()) if self.cells[idx].fluor == celln.fluor])
                 if hasattr(celln, 'rate_code'):
                     celln.rate_code.early_winsize = mean_cutoff
                 if hasattr(celln, 'temp_code'):
@@ -226,7 +226,7 @@ class Analysis(object):
         
         # Create summary of electrophysiological features
         
-        df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.ephys), index=self.cells.keys());
+        df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.ephys), index=list(self.cells.keys()));
 
         # Reorder columns
 
@@ -252,7 +252,7 @@ class Analysis(object):
         self.fig_dend      = plots.plot_dendrogram(df_ephys_transform)
         del df_ephys_transform
         
-        df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.syns), index=self.cells.keys())
+        df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.syns), index=list(self.cells.keys()))
         self.df_syns       = df[df['Layer']=='L2/3']
         self.fig_monorel   = plots.plot_syn_reliability(self.df_syns)
         self.fig_mean_dly  = plots.plot_syn_delays(self.df_syns, kind='Mean')
@@ -265,7 +265,7 @@ class Analysis(object):
         wins  = ['mono', 'poly', 'all', 'early', 'late']
         
         df_criteria = pd.DataFrame(merge_dicts(self.cells.metadata, self.cells.syns, self.cells.ephys), 
-                                   index=self.cells.keys())
+                                   index=list(self.cells.keys()))
         
         ## Inclusion Criteria ##
         # Include if cell in L2/3 and input reliability > 0.9
@@ -280,13 +280,13 @@ class Analysis(object):
         df_criteria['include'] = criteria
         self.df_criteria = df_criteria
 
-        for code in self.cells.MI.keys():
+        for code in list(self.cells.MI.keys()):
             if type(self.cells.MI[code]) is dict:
                 self.results[code] = {}
-                for resp in self.cells.MI[code].keys():
+                for resp in list(self.cells.MI[code].keys()):
                     if type(self.cells.MI[code][resp]) is dict:
                         self.results[code][resp] = {}
-                        for win in self.cells.MI[code][resp].keys():
+                        for win in list(self.cells.MI[code][resp].keys()):
                             self.results[code][resp][win] = {}
                             df_MI = df
 
@@ -318,11 +318,11 @@ class Analysis(object):
         self.results['cutoff']['fig'].savefig(fig_dir + '/cutoff.svg')
         
         self.results['modality'] = {}
-        for code in self.cells.modality.keys():
+        for code in list(self.cells.modality.keys()):
             self.results['modality'][code] = {}
-            for win in self.cells.modality[code].keys():
+            for win in list(self.cells.modality[code].keys()):
                 self.results['modality'][code][win] = {}
-                for state in self.cells.modality[code][win].keys():
+                for state in list(self.cells.modality[code][win].keys()):
                     self.results['modality'][code][win][state] = {}
                     df_modality = df
                     df_modality['modality'] = self.cells.modality[code][win][state]
@@ -343,7 +343,7 @@ class Analysis(object):
         
         all_slopes = []
         self.fig_slopes = plt.figure()
-        for cellid, celln in self.cells.items():
+        for cellid, celln in list(self.cells.items()):
             if celln.syns.reliability >= 0.9:
                 for ix in range(10):
                     slope = celln.syns.synapses[ix]['slope']

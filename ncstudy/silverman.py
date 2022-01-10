@@ -288,7 +288,7 @@ def silvermans_test(X, target_modes=1, num_bootstraps = 200, tol=1e-3):
     # Estimate p-value
     p = 0
     
-    for ix in tq.tqdm(range(num_bootstraps)):
+    for ix in tq.tqdm(list(range(num_bootstraps))):
         # Sample from KDE with critical bandwidth
         Z = bootstrap_sample(X, sigma=sigma_critical, sample_size=len(X))
 
