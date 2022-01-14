@@ -146,13 +146,19 @@ def plot_bar(df, num_comparisons=1, figsize=(3,4), tests=None):
         fig.subplots_adjust(right=0.5)
         ax_results = fig.add_axes([0.6,0.125,0.375,0.775])
         plt.sca(ax_results)
-        n_cells = df.groupby('Fluorescence').count().as_matrix().squeeze()
+        n_cells = df.groupby('Fluorescence').count().values.squeeze()
         n_cells_string = ''.join(['%s n= %i\n'%(fl, nc) for fl, nc in zip(fluors, n_cells)])
         plt.text(s= n_cells_string + test_string, x= 0.0, y= 0.15, fontsize= 14)
         plt.axis('off')
     return fig
 
 def plot_MI(df, title_string, num_comparisons, figsize=(3,4), tests=None):
+    
+    print(title_string)
+    print(df)
+    print(tests)
+    print(num_comparisons)
+    
     fig = plot_bar(df, num_comparisons=num_comparisons, figsize=(3,4), tests=tests)
     plt.title(title_string)
     plt.ylabel('%sMutual Information (bits)'%('Conditional\n' if 'Rate' in title_string else ''))
@@ -206,7 +212,7 @@ def plot_pca(df, figsize=(15, 5)):
 
 def plot_dendrogram(df, figsize=(25, 10)):
     
-    x = df.select_dtypes(np.number).as_matrix()
+    x = df.select_dtypes(np.number).values
     imp = SimpleImputer(strategy="mean", axis=0)
     scale = StandardScaler()
     x = scale.fit_transform(imp.fit_transform(x))

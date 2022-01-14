@@ -18,14 +18,14 @@ def entropyEstimation(x,bins='auto'):
     return h
 
 def jointEntropyEstimation2D(x,y,bins='auto'):
-    pxy,bx,by = np.histogram2d(x,y,bins=bins,normed=True)
+    pxy,bx,by = np.histogram2d(x,y,bins=bins,density=True)
     dx = np.diff(bx)[0]
     dy = np.diff(by)[0]
     hxy = -np.sum(dx*dy*pxy*np.ma.log2(pxy))
     return hxy
 
 def jointEntropyEstimation3D(x,y,z,bins='auto'):
-    pxyz,(bx,by,bz) = np.histogramdd([x,y,z],bins=bins,normed=True)
+    pxyz,(bx,by,bz) = np.histogramdd([x,y,z],bins=bins,density=True)
     dx = np.diff(bx)[0]
     dy = np.diff(by)[0]
     dz = np.diff(bz)[0]
@@ -72,13 +72,13 @@ def spikeConditionalMutualInformation(postSpikes, signal, preSpikes):
     prc1 = []
     
     for postSpikes_i in postSpikes:
-        prc.append(np.histogram2d(preSpikes, postSpikes_i, bins=[bc, br], normed=True)[0])
+        prc.append(np.histogram2d(preSpikes, postSpikes_i, bins=[bc, br], density=True)[0])
         prc0.append(np.histogram2d(preSpikes[signal==0], postSpikes_i[signal==0],
                                   bins= [bc, br],
-                                  normed= True)[0])
+                                  density=True)[0])
         prc1.append(np.histogram2d(preSpikes[signal==1], postSpikes_i[signal==1],
                                   bins=[bc, br],
-                                  normed=True)[0])
+                                  density=True)[0])
         
     prc = np.array(prc).mean(axis=0)                # P(pre, post)
     prc0 = np.array(prc0).mean(axis=0)              # P(pre, post | signal = low)
@@ -105,19 +105,23 @@ def spikeMutualInformation(postSpikes, signal):
     pr   = []
     
     for postSpikes_i in postSpikes:
-        prs.append(np.histogram2d(postSpikes_i, signal, bins=[br, bs], normed= True)[0])
+        prs.append(np.histogram2d(postSpikes_i, signal, bins=[br, bs], density=True)[0])
 
-        pr.append(np.histogram(postSpikes_i, bins=br, normed=True)[0])
+        pr.append(np.histogram(postSpikes_i, bins=br, density=True)[0])
 
     prs = np.array(prs).mean(axis=0)                # P(post, signal)
     pr = np.array(pr).mean(axis=0)                  # P(post)
     p1 = np.sum(signal==1)/float(len(signal))       # P(signal = high)
 
+    print('prs: ' + str(prs))
+    print('pr: ' + str(pr))
     
     hrs = -np.sum(prs*np.ma.log2(prs))            # H(post, signal)
     hr = -np.sum(pr*np.ma.log2(pr))               # H(post)
     hs = -(p1*np.log2(p1) +(1-p1)*np.log2(1-p1))  # H(signal)
 
+    print('hr + hs - hrs: ' + str(hr + hs - hrs))
+    
     return hr + hs - hrs                            # I(signal; post) = H(post) + H(signal) - H(post, signal)
 
 def hypothesis_tests(df):
@@ -128,6 +132,9 @@ def hypothesis_tests(df):
     grouped_data = [df.groupby('Fluorescence').get_group(fl)[colname] for fl in fluors]
     
     test_dict = {'Main' : {}, 'Pairs' : {}}
+    
+    print(grouped_data)
+    print(*grouped_data)
     
     _,p_levene = stats.levene(*grouped_data) # equal variances test
     test_dict['Main']['Levenes'] = p_levene

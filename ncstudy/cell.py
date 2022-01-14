@@ -267,12 +267,10 @@ class Synapses(Cell):
 
 #         self.presyn_ids = np.loadtxt(self.celldir+'/presyn_ids.csv', delimiter=',', dtype=int)
         # JI - Instead of above line
-        print(self.celldir+'/presyn_ids.csv')
         with open(self.celldir+'/presyn_ids.csv', 'rb') as f: 
             lines = f.readlines()
-#             print(lines)
             self.presyn_ids = np.loadtxt(lines[1:], dtype=int)
-            print(self.presyn_ids)
+
             
         self.synapses = dict([(ix, {'id' : self.presyn_ids[ix]}) for ix in range(10)])
 
@@ -534,8 +532,6 @@ class Electrophysiology(Cell):
 class Code(Cell):
     def __init__(self, celldir, code_type, delay, stim_winsize, mono_winsize, start, dur, sampling_frequency):
         
-        print(celldir)
-        
         super(Code, self).__init__(celldir)
         assert code_type == 'rate' or code_type == 'temp', 'code_type \'%s\' not recognised'%code_type
         
@@ -561,9 +557,7 @@ class Code(Cell):
         
         self.time               = np.arange(0, self.dur, self.stim_winsize/1000.)
         self.time_trace         = np.arange(self.exp_dur, dtype=float)/(self.sampling_frequency*1000)
-        
-        # JI WHERE THE MISSING DATA IS USED
-        
+                
         self.stimulus           = np.loadtxt('./stimulus/%scode.csv'%self.code_type, delimiter=',', skiprows=1)[:, 1:]/50
         
         sigBins,signal          = np.loadtxt('./stimulus/stim_signal.csv', delimiter= ',')
@@ -572,7 +566,6 @@ class Code(Cell):
                                            nf= 1000/self.stim_winsize)
 
         self.data_exists        = os.path.exists('./%s/%s.abf'%(self.celldir, self.file_type))
-        print(self.data_exists)
         
         self.get_spikeTimes()
             
@@ -594,6 +587,18 @@ class Code(Cell):
             self.results = {'Spikes'     : {},
                             'Average Vm' : {},
                             'Initial Slope' : []}
+            
+            print('data ' + str(data))
+            print('self.delay ' + str(self.delay))
+            print('self.stim_winsize ' + str(self.stim_winsize))
+            print('self.mono_winsize ' + str(self.mono_winsize))
+            print('self.early_winsize ' + str(self.early_winsize))
+            print('self.stim_winsteps ' + str(self.stim_winsteps))
+            print('self.mono_winsteps ' + str(self.mono_winsteps))
+            print('self.time ' + str(self.time))
+            print('self.dur ' + str(self.dur))
+            print('self.time_trace ' + str(self.time_trace))
+            
             
             delay_secs         = self.delay/1000.
             stim_winsize_secs  = self.stim_winsize/1000.
@@ -644,6 +649,15 @@ class Code(Cell):
             if self.code_type == 'rate':
                 # estimate mutual information conditioned on pre-synaptic spike count
                 preSpikes = self.stimulus.sum(axis=1)
+                
+                print("preSpikes len: " + str(len(preSpikes)))
+                print("preSpikes")
+                print(preSpikes)
+                print("spikeCounts")
+                print(self.spikeCounts)
+                print("signal len: " + str(len(self.signal)))
+                print("signal")
+                print(self.signal)
 
                 # Initial Slope
                 self.results['Initial Slope'] = conditionalMutualInformation(s = self.signal[self.slopes.nonzero()],
@@ -787,25 +801,25 @@ class Code(Cell):
                 plt.setp(legend.get_title(),fontsize=16)
                 
                 plt.sca(axs[1,0])
-                plt.hist2d(preSpikeCounts[signal==0], postSpikeCounts[signal==0], bins=[bins_pre, bins_post], normed=True)
+                plt.hist2d(preSpikeCounts[signal==0], postSpikeCounts[signal==0], bins=[bins_pre, bins_post], density=True)
                 plt.xlabel('Presynaptic Stimulus Count')
                 plt.ylabel('Postsynaptic Stimulus Count')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, Post Count | State = Low)')
                 
                 plt.sca(axs[1,1])
-                plt.hist2d(preSpikeCounts[signal==1], postSpikeCounts[signal==1], bins=[bins_pre, bins_post], normed=True)
+                plt.hist2d(preSpikeCounts[signal==1], postSpikeCounts[signal==1], bins=[bins_pre, bins_post], density=True)
                 plt.xlabel('Presynaptic Stimulus Count')
                 plt.ylabel('Postsynaptic Stimulus Count')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, Post Count | State = High)')
                 
                 plt.sca(axs[2,0])
-                plt.hist2d(preSpikeCounts[signal==0], average_Vm[signal==0], bins=[bins_pre, bins_avVm], normed=True)
+                plt.hist2d(preSpikeCounts[signal==0], average_Vm[signal==0], bins=[bins_pre, bins_avVm], density=True)
                 plt.xlabel('Presynaptic Stimulus Count')
                 plt.ylabel('Average Membrane Potential (mV)')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = Low)')
                 
                 plt.sca(axs[2,1])
-                plt.hist2d(preSpikeCounts[signal==1], average_Vm[signal==1], bins=[bins_pre, bins_avVm], normed=True)
+                plt.hist2d(preSpikeCounts[signal==1], average_Vm[signal==1], bins=[bins_pre, bins_avVm], density=True)
                 plt.xlabel('Presynaptic Stimulus Count')
                 plt.ylabel('Average Membrane Potential (mV)')
                 plt.colorbar(fraction=0.05, label='Pr(Pre Count, V$_{mem}$ | State = High)')

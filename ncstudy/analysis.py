@@ -45,7 +45,7 @@ class Analysis(object):
         for cellid in tqdm.tqdm(list(self.cells.keys())):
             celln = self.cells[cellid]
             if os.path.exists(celln.celldir + '/ephys.yaml') and not redo_ephys:
-                state = yaml.load(open(celln.celldir + '/ephys.yaml', 'r'))
+                state = yaml.load(open(celln.celldir + '/ephys.yaml', 'r'), Loader=yaml.Loader)
                 celln.ephys = cell.Electrophysiology(celldir  = celln.celldir,
                                                      pulse_on =state['Experiment']['pulse_on'],
                                                      pulse_len=state['Experiment']['pulse_len'], 
@@ -74,7 +74,7 @@ class Analysis(object):
                 self.incomplete['ephys'].append(cellid)
 
             if os.path.exists(celln.celldir + '/syns.yaml') and not redo_syns:
-                state = yaml.load(open(celln.celldir+'/syns.yaml', 'r'))
+                state = yaml.load(open(celln.celldir+'/syns.yaml', 'r'), Loader=yaml.Loader)
                 celln.syns = cell.Synapses(celldir=celln.celldir,
                                            mono_winsize=state['Experiment']['mono_winsize'],
                                            total_winsize=state['Experiment']['total_winsize'],
@@ -86,9 +86,10 @@ class Analysis(object):
             else:
                 self.incomplete['syns'].append(cellid)
 
+            print('HERE')
             if os.path.exists(celln.celldir + '/MI.yaml') and not redo_MI:
-                state = yaml.load(open(celln.celldir+'/MI.yaml', 'r'))
-
+                state = yaml.load(open(celln.celldir+'/MI.yaml', 'r'), Loader=yaml.Loader)
+                
                 celln.cutoff = state['Results']['cutoff']
                 celln.rate_code = cell.Code(celldir= celln.celldir, code_type='rate', delay=celln.syns.max_delay,
                                             mono_winsize       = state['Params']['Rate']['mono_winsize'],
@@ -99,7 +100,7 @@ class Analysis(object):
 
                 celln.rate_code.early_winsize  = state['Params']['Rate']['early_winsize']
                 celln.rate_code.results        = state['Results']['Rate']
-
+                
                 if celln.rate_code.data_exists:                
                     celln.rate_code.spikeTimes = state['SpikeTimes']['Rate']
 
@@ -119,7 +120,7 @@ class Analysis(object):
                 self.incomplete['MI'].append(cellid)
 
             if os.path.exists(celln.celldir + '/modality.yaml') and not redo_modality:
-                state = yaml.load(open(celln.celldir+'/modality.yaml', 'r'))
+                state = yaml.load(open(celln.celldir+'/modality.yaml', 'r'), Loader=yaml.Loader)
 
                 celln.rate_code.silverman = state['Rate']
                 celln.temp_code.silverman = state['Temporal']
@@ -240,23 +241,23 @@ class Analysis(object):
         df = df[cols]
         self.df_ephys      = df[df['Layer']=='L2/3']
         self.fig_ephys     = plots.plot_ephys_summary(self.df_ephys)
-        self.fig_fi        = plots.plot_fICurves(self.cells)
+#         self.fig_fi        = plots.plot_fICurves(self.cells)
         
-        df_ephys_transform = self.df_ephys.drop(['Adaptation Ratio', 'Vrest (mV)'], 1)
-        df_ephys_transform['log(Adaptation Ratio)'] = self.df_ephys['Adaptation Ratio'].apply(np.log)
-        self.fig_scatter   = plots.plot_ephys_scatter(df_ephys_transform)
+#         df_ephys_transform = self.df_ephys.drop(['Adaptation Ratio', 'Vrest (mV)'], 1)
+#         df_ephys_transform['log(Adaptation Ratio)'] = self.df_ephys['Adaptation Ratio'].apply(np.log)
+#         self.fig_scatter   = plots.plot_ephys_scatter(df_ephys_transform)
         
-        self.df_pca        = ephys_pca(df_ephys_transform)
-        self.fig_pca       = plots.plot_pca(self.df_pca)
+#         self.df_pca        = ephys_pca(df_ephys_transform)
+#         self.fig_pca       = plots.plot_pca(self.df_pca)
         
-        self.fig_dend      = plots.plot_dendrogram(df_ephys_transform)
-        del df_ephys_transform
+#         self.fig_dend      = plots.plot_dendrogram(df_ephys_transform)
+#         del df_ephys_transform
         
         df = pd.DataFrame(data=merge_dicts(self.cells.metadata, self.cells.syns), index=list(self.cells.keys()))
-        self.df_syns       = df[df['Layer']=='L2/3']
-        self.fig_monorel   = plots.plot_syn_reliability(self.df_syns)
-        self.fig_mean_dly  = plots.plot_syn_delays(self.df_syns, kind='Mean')
-        self.fig_max_dly   = plots.plot_syn_delays(self.df_syns, kind='Max')
+#         self.df_syns       = df[df['Layer']=='L2/3']
+#         self.fig_monorel   = plots.plot_syn_reliability(self.df_syns)
+#         self.fig_mean_dly  = plots.plot_syn_delays(self.df_syns, kind='Mean')
+#         self.fig_max_dly   = plots.plot_syn_delays(self.df_syns, kind='Max')
         
         self.results       = {}
         
@@ -331,30 +332,30 @@ class Analysis(object):
                     self.results['modality'][code][win][state]['fig'] = plots.hist_modality(df_modality, title='%s-%s-%s'%(win, code, state))
                     self.results['modality'][code][win][state]['fig'].savefig(fig_dir + '/%s_%s_%s_modality.svg'%(win, code, state))
 
-        self.fig_ephys.savefig(fig_dir+'/ephys_features.svg')
-        self.fig_scatter.savefig(fig_dir+'/ephys_scatter.svg')
-        self.fig_pca.savefig(fig_dir+'/ephys_pca.svg')
-        self.fig_dend.savefig(fig_dir+'/ephys_dendrogram.svg')
+#         self.fig_ephys.savefig(fig_dir+'/ephys_features.svg')
+#         self.fig_scatter.savefig(fig_dir+'/ephys_scatter.svg')
+#         self.fig_pca.savefig(fig_dir+'/ephys_pca.svg')
+#         self.fig_dend.savefig(fig_dir+'/ephys_dendrogram.svg')
         
-        self.fig_fi.savefig(fig_dir+'/fI_curves.svg')
-        self.fig_monorel.savefig(fig_dir+'/reliability.svg')
-        self.fig_mean_dly.savefig(fig_dir+'/mean_delay.svg')
-        self.fig_max_dly.savefig(fig_dir+'/max_delay.svg')
+#         self.fig_fi.savefig(fig_dir+'/fI_curves.svg')
+#         self.fig_monorel.savefig(fig_dir+'/reliability.svg')
+#         self.fig_mean_dly.savefig(fig_dir+'/mean_delay.svg')
+#         self.fig_max_dly.savefig(fig_dir+'/max_delay.svg')
         
-        all_slopes = []
-        self.fig_slopes = plt.figure()
-        for cellid, celln in list(self.cells.items()):
-            if celln.syns.reliability >= 0.9:
-                for ix in range(10):
-                    slope = celln.syns.synapses[ix]['slope']
-                    all_slopes.append(celln.syns.synapses[ix]['slope'])
+#         all_slopes = []
+#         self.fig_slopes = plt.figure()
+#         for cellid, celln in list(self.cells.items()):
+#             if celln.syns.reliability >= 0.9:
+#                 for ix in range(10):
+#                     slope = celln.syns.synapses[ix]['slope']
+#                     all_slopes.append(celln.syns.synapses[ix]['slope'])
 
-        plt.hist(all_slopes, bins='auto', density=True);
-        plt.xlabel('Postsynaptic response slope (mV/ms)')
-        plt.ylabel('Probability');
-        plt.xlim(0, 9)
+#         plt.hist(all_slopes, bins='auto', density=True);
+#         plt.xlabel('Postsynaptic response slope (mV/ms)')
+#         plt.ylabel('Probability');
+#         plt.xlim(0, 9)
         
-        self.fig_slopes.savefig(fig_dir+'/slopes.svg')
+#         self.fig_slopes.savefig(fig_dir+'/slopes.svg')
         
         plt.close('all')
         self.save()
